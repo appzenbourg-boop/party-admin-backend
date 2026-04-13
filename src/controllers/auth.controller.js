@@ -363,6 +363,7 @@ export const verifyOtp = async (req, res, next) => {
                 name: user.name || (user.firstName ? `${user.firstName} ${user.lastName || ''}`.trim() : ''),
                 email: user.email,
                 role: user.role,
+                staffType: user.staffType || null, // Staff type (SECURITY/WAITER)
                 staffRole: user.staffType || null, // Keeping for backward compatibility temporarily
                 hostId: user.hostId || null,
                 profileImage: user.profileImage,
