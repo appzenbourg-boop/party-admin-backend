@@ -140,8 +140,8 @@ export const sendOtp = async (req, res, next) => {
             const rawPhone = identifier.replace(/\s/g, '');
             const e164Phone = rawPhone.startsWith('+') ? rawPhone : `+${rawPhone}`;
 
-            // ⚡ PRODUCTION-READY: Use env variable to control Twilio bypass
-            const useTwilioBypass = process.env.TWILIO_BYPASS === 'true';
+            // ⚡ FAST-FIX: Temporarily hardcoded to true to bypass Twilio and save SMS quota
+            const useTwilioBypass = true; // process.env.TWILIO_BYPASS === 'true';
             
             if (useTwilioBypass) {
                 // 🔧 BYPASS MODE: Use local DB OTP (for testing/development)
@@ -207,8 +207,8 @@ export const verifyOtp = async (req, res, next) => {
             const rawPhone = identifier.replace(/\s/g, '');
             const e164Phone = rawPhone.startsWith('+') ? rawPhone : `+${rawPhone}`;
 
-            // ⚡ PRODUCTION-READY: Use env variable to control Twilio bypass
-            const useTwilioBypass = process.env.TWILIO_BYPASS === 'true';
+            // ⚡ FAST-FIX: Temporarily hardcoded to true to bypass Twilio and save SMS quota
+            const useTwilioBypass = true; // process.env.TWILIO_BYPASS === 'true';
             
             if (useTwilioBypass) {
                 // 🔧 BYPASS MODE: Check against local DB OTP
