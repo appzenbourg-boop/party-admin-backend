@@ -77,6 +77,7 @@ export const getAnalyticsSummary = async (req, res, next) => {
         const responseData = isAdmin ? {
             totalRevenue: ticketRevenue,
             ticketRevenue,
+            orderRevenue, // Required by APK frontend to render the pie chart split
             totalOrders: totalTicketsCount,
             totalTickets: totalTicketsCount,
             deliveredOrders: totalTicketsCount,
