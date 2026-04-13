@@ -1,5 +1,23 @@
 import { FoodOrder } from '../models/FoodOrder.js';
+import { Staff } from '../models/Staff.js';
 import { getIO } from '../socket.js';
+
+export const getProfile = async (req, res, next) => {
+    try {
+        const staff = await Staff.findById(req.user.id)
+            .select('-password -refreshToken')
+            .populate('hostId', 'name businessName')
+            .lean();
+
+        if (!staff) {
+            return res.status(404).json({ success: false, message: 'Staff profile not found' });
+        }
+
+        res.status(200).json({ success: true, data: staff });
+    } catch (err) {
+        next(err);
+    }
+};
 
 export const getAvailableOrders = async (req, res, next) => {
     try {
