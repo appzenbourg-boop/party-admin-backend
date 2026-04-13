@@ -3,6 +3,7 @@ import { Host } from '../models/Host.js';
 import { Event } from '../models/Event.js';
 import { Staff } from '../models/Staff.js';
 import { Booking } from '../models/booking.model.js';
+import { FoodOrder } from '../models/FoodOrder.js';
 import { Admin } from '../models/admin.model.js';
 import { cacheService } from '../services/cache.service.js';
 import { sendNotification } from '../services/notification.service.js';
@@ -443,7 +444,7 @@ export const getBookingList = async (req, res, next) => {
 export const getAdminStats = async (req, res, next) => {
     try {
 
-        const [userCount, activeHosts, totalHosts, pendingHosts, totalBookings, revenueAgg] = await Promise.all([
+        const [userCount, activeHosts, totalHosts, pendingHosts, totalBookings, revenueAgg, foodRevenueAgg] = await Promise.all([
             User.countDocuments({ role: 'user' }),
             Host.countDocuments({ role: 'HOST', hostStatus: 'ACTIVE' }),
             Host.countDocuments({ role: 'HOST' }),
@@ -452,8 +453,15 @@ export const getAdminStats = async (req, res, next) => {
             Booking.aggregate([
                 { $match: { paymentStatus: 'paid', status: { $ne: 'cancelled' } } },
                 { $group: { _id: null, total: { $sum: '$pricePaid' } } }
+            ]),
+            FoodOrder.aggregate([
+                { $match: { paymentStatus: 'paid', status: { $in: ['completed', 'out_for_delivery'] } } },
+                { $group: { _id: null, total: { $sum: '$totalAmount' } } }
             ])
         ]);
+
+        const ticketRevenue = revenueAgg[0]?.total || 0;
+        const orderRevenue = foodRevenueAgg[0]?.total || 0;
 
         const stats = {
             users: userCount,
@@ -461,11 +469,32 @@ export const getAdminStats = async (req, res, next) => {
             hosts: totalHosts,
             pendingHosts,
             bookings: totalBookings,
-            totalRevenue: revenueAgg[0]?.total || 0,
+            totalRevenue: ticketRevenue + orderRevenue, // ✅ Full revenue: tickets + food orders
+            ticketRevenue,
+            orderRevenue,
             updatedAt: new Date()
         };
 
         res.status(200).json({ success: true, data: stats });
+    } catch (error) {
+        next(error);
+    }
+};
+
+export const getAdminProfile = async (req, res, next) => {
+    try {
+        const adminId = req.user.id;
+        const CACHE_KEY = `admin_self_prof_${adminId}`;
+
+        let cached = await cacheService.get(CACHE_KEY);
+        if (cached) return res.status(200).json({ success: true, data: cached });
+
+        const admin = await Admin.findById(adminId).select('name email username role profileImage').lean();
+        if (!admin) return res.status(404).json({ success: false, message: 'Admin not found' });
+
+        await cacheService.set(CACHE_KEY, admin, 300); // cache 5 min
+        
+        res.status(200).json({ success: true, data: admin });
     } catch (error) {
         next(error);
     }
