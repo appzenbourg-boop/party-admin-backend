@@ -168,15 +168,22 @@ export const getRevenueTrend = async (req, res, next) => {
 // GET /analytics/top-items
 export const getTopItems = async (req, res, next) => {
     try {
-        const CACHE_KEY = `top_items_${req.user.id}`;
+        const userRole = req.user?.role?.toUpperCase();
+        const isAdmin = userRole === 'ADMIN' || userRole === 'SUPERADMIN';
+        const CACHE_KEY = isAdmin ? 'top_items_admin_all' : `top_items_${req.user.id}`;
         let cachedData = await cacheService.get(CACHE_KEY);
         if (cachedData) return res.status(200).json({ success: true, data: cachedData, source: 'cache' });
 
+        // Admin sees all items platform-wide, host sees only their items
+        const matchStage = isAdmin
+            ? { paymentStatus: 'paid' }
+            : { hostId: req.user.id, paymentStatus: 'paid' };
+
         const userOrders = await FoodOrder.aggregate([
-            { $match: { hostId: req.user.id, paymentStatus: 'paid' } },
+            { $match: matchStage },
             { $unwind: "$items" },
             { $group: { _id: "$items.name", totalSold: { $sum: "$items.qty" }, revenue: { $sum: { $multiply: ["$items.qty", "$items.price"] } } }},
-            { $sort: { totalSold: -1 } },
+            { $sort: { revenue: -1 } },
             { $limit: 10 }
         ]);
         
@@ -190,17 +197,27 @@ export const getTopItems = async (req, res, next) => {
 // GET /analytics/top-users
 export const getTopUsers = async (req, res, next) => {
     try {
-        const CACHE_KEY = `top_users_${req.user.id}`;
+        const userRole = req.user?.role?.toUpperCase();
+        const isAdmin = userRole === 'ADMIN' || userRole === 'SUPERADMIN';
+        const CACHE_KEY = isAdmin ? 'top_users_admin_all' : `top_users_${req.user.id}`;
         let cachedData = await cacheService.get(CACHE_KEY);
         if (cachedData) return res.status(200).json({ success: true, data: cachedData, source: 'cache' });
 
+        // Admin sees top spenders platform-wide, host sees only their customers
+        const bookingMatch = isAdmin
+            ? { paymentStatus: 'paid' }
+            : { hostId: req.user.id, paymentStatus: 'paid' };
+        const orderMatch = isAdmin
+            ? { paymentStatus: 'paid' }
+            : { hostId: req.user.id, paymentStatus: 'paid' };
+
         const topB = await Booking.aggregate([
-            { $match: { hostId: req.user.id, paymentStatus: 'paid' } },
+            { $match: bookingMatch },
             { $group: { _id: "$userId", spent: { $sum: "$pricePaid" } } }
         ]);
 
         const topO = await FoodOrder.aggregate([
-            { $match: { hostId: req.user.id, paymentStatus: 'paid' } },
+            { $match: orderMatch },
             { $group: { _id: "$userId", spent: { $sum: "$totalAmount" } } }
         ]);
 
