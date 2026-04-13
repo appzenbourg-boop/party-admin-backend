@@ -4,14 +4,7 @@ This document records the recent fixes applied to the Admin Section across the f
 
 ## Backend Changes (`party-admin-backend`)
 
-### 1. Actual Revenue Calculation
-- **Files Affected**: 
-  - `src/controllers/admin.controller.js`
-  - `src/controllers/analytics.controller.js`
-- **Issue**: The Admin Dashboard and Analytics Net Revenue were previously only calculating `Booking` (event tickets) revenue, completely ignoring `FoodOrder` revenue.
-- **Fix**: Added parallel aggregation for `FoodOrder` where `status` is `completed` or `out_for_delivery`. Both revenues (tickets + food) are now summed up as `totalRevenue`. The UI now correctly displays the true full revenue. 
 
-### 2. Admin Profile Synchronization
 - **Files Affected**: 
   - `src/routes/admin.routes.js`
   - `src/controllers/admin.controller.js`

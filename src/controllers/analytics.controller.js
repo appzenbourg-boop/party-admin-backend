@@ -72,11 +72,11 @@ export const getAnalyticsSummary = async (req, res, next) => {
         const ticketRevenue = ticketsAgg[0]?.ticketRevenue || 0;
         const totalTicketsCount = ticketsAgg[0]?.totalTickets || 0;
         
-        // ⚡ ADMIN: Show ALL revenue (tickets + food orders)
+        // ⚡ ADMIN: Only show ticket revenue and bookings (no food orders, staff, live orders)
+        // ⚡ HOST: Show everything
         const responseData = isAdmin ? {
-            totalRevenue: ticketRevenue + orderRevenue,
+            totalRevenue: ticketRevenue,
             ticketRevenue,
-            orderRevenue,
             totalOrders: totalTicketsCount,
             totalTickets: totalTicketsCount,
             deliveredOrders: totalTicketsCount,
