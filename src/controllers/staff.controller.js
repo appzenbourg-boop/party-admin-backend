@@ -19,6 +19,34 @@ export const getProfile = async (req, res, next) => {
     }
 };
 
+export const updateProfile = async (req, res, next) => {
+    try {
+        const { name, username, profileImage } = req.body;
+        
+        const updateData = {};
+        if (name) updateData.name = name;
+        if (username) updateData.username = username;
+        if (profileImage) updateData.profileImage = profileImage;
+
+        const staff = await Staff.findByIdAndUpdate(
+            req.user.id,
+            { $set: updateData },
+            { new: true, runValidators: true }
+        )
+        .select('-password -refreshToken')
+        .populate('hostId', 'name businessName')
+        .lean();
+
+        if (!staff) {
+            return res.status(404).json({ success: false, message: 'Staff profile not found' });
+        }
+
+        res.status(200).json({ success: true, message: 'Profile updated', data: staff });
+    } catch (err) {
+        next(err);
+    }
+};
+
 export const getAvailableOrders = async (req, res, next) => {
     try {
         // Rocket-speed: Single-pass lean query with minimal projection
