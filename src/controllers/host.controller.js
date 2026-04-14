@@ -137,94 +137,98 @@ export const completeProfile = async (req, res, next) => {
             return res.status(400).json({ success: false, message: 'KYC documents already submitted for review.' });
         }
 
-        // ⚡ SYNCHRONOUS: Upload and save BEFORE sending response
-        console.log('[completeProfile] Starting synchronous uploads...');
-        
-        // Parallelizing Cloudinary Uploads for Performance
-        const uploadTask = async (data, folder) => {
-            if (data && data.startsWith('data:')) {
-                return await uploadToCloudinary(data, folder);
-            }
-            return data;
-        };
-
-        const [finalProfileImage, finalAadhaar, finalPan] = await Promise.all([
-            uploadTask(profileImage, 'host-profiles'),
-            uploadTask(aadhaarUrl, 'host-kyc'),
-            uploadTask(panUrl, 'host-kyc')
-        ]);
-
-        console.log('[completeProfile] Uploads complete. Updating database...');
-
-        // Update Host Fields
+        // ⚡ INSTANT RESPONSE - Update status immediately
+        host.hostStatus = 'KYC_PENDING';
+        host.kycSubmitted = true;
+        host.profileCompletion = 100;
         if (name) host.name = name;
         if (dob) host.dateOfBirth = dob;
         if (location) {
             host.location = host.location || {};
             host.location.address = location;
         }
-        if (finalProfileImage) host.profileImage = finalProfileImage;
 
-        // kycDocs logic
-        const kycDocs = [];
-        if (finalAadhaar) kycDocs.push({ type: 'AADHAR', url: finalAadhaar, status: 'PENDING', uploadedAt: new Date() });
-        if (finalPan) kycDocs.push({ type: 'PAN', url: finalPan, status: 'PENDING', uploadedAt: new Date() });
-        
-        if (kycDocs.length > 0) {
-            host.kyc = host.kyc || {};
-            host.kyc.documents = kycDocs;
-            host.markModified('kyc');
-            host.markModified('kyc.documents');
-        }
-
-        host.profileCompletion = 100;
-        host.hostStatus = 'KYC_PENDING';
-        host.kycSubmitted = true;
-
-        console.log('[completeProfile] Saving to database...');
         await host.save();
-        console.log('[completeProfile] ✅ Database saved. New status:', host.hostStatus);
-        
-        // ⚡ CLEAR PROFILE CACHE after save
-        console.log('[completeProfile] Clearing cache after save...');
+        console.log('[completeProfile] ✅ Status updated to KYC_PENDING');
+
+        // Clear cache immediately
         await cacheService.delete(ckey('profile', hostId));
         await cacheService.delete(`auth_status_${hostId}`);
         await cacheService.delete(`host_profile_${hostId}`);
         await cacheService.delete(`hostProfile_${hostId}`);
-        console.log('[completeProfile] ✅ Cache cleared.');
-        
-        // ⚡ AUTO-CREATE VENUE PROFILE from onboarding data
-        const existingVenue = await Venue.findOne({ hostId: host._id });
-        if (!existingVenue) {
-            await Venue.create({
-                hostId: host._id,
-                name: name || 'My Venue',
-                venueType: 'Nightclub',
-                address: location || '',
-                description: '',
-                capacity: 0,
-                openingTime: '10:00 PM',
-                closingTime: '04:00 AM',
-                rules: 'Strictly Elegant',
-                heroImage: '',
-                images: [],
-                amenities: []
-            });
-            console.log(`[completeProfile] Auto-created venue profile for Host: ${host._id}`);
-        }
 
-        // ✅ Send response AFTER everything is saved
+        // ✅ Send instant response
         res.status(200).json({
             success: true,
             message: 'Profile submitted for review successfully!',
             data: {
                 id: host._id,
-                hostStatus: host.hostStatus,
+                hostStatus: 'KYC_PENDING',
                 profileCompletion: 100
             }
         });
 
-        console.log('[completeProfile] ✅ Complete. Response sent.');
+        console.log('[completeProfile] ✅ Response sent. Starting background upload...');
+
+        // 🔥 BACKGROUND: Upload images and update documents
+        (async () => {
+            try {
+                const uploadTask = async (data, folder) => {
+                    if (data && data.startsWith('data:')) {
+                        return await uploadToCloudinary(data, folder);
+                    }
+                    return data;
+                };
+
+                const [finalProfileImage, finalAadhaar, finalPan] = await Promise.all([
+                    uploadTask(profileImage, 'host-profiles'),
+                    uploadTask(aadhaarUrl, 'host-kyc'),
+                    uploadTask(panUrl, 'host-kyc')
+                ]);
+
+                console.log('[completeProfile] Background uploads complete');
+
+                // Update with uploaded URLs
+                const updateData = {};
+                if (finalProfileImage) updateData.profileImage = finalProfileImage;
+                
+                const kycDocs = [];
+                if (finalAadhaar) kycDocs.push({ type: 'AADHAR', url: finalAadhaar, status: 'PENDING', uploadedAt: new Date() });
+                if (finalPan) kycDocs.push({ type: 'PAN', url: finalPan, status: 'PENDING', uploadedAt: new Date() });
+                
+                if (kycDocs.length > 0) {
+                    updateData['kyc.documents'] = kycDocs;
+                }
+
+                await Host.findByIdAndUpdate(hostId, { $set: updateData });
+                console.log('[completeProfile] ✅ Background update complete');
+
+                // Clear cache again after upload
+                await cacheService.delete(ckey('profile', hostId));
+
+                // Auto-create venue
+                const existingVenue = await Venue.findOne({ hostId: host._id });
+                if (!existingVenue) {
+                    await Venue.create({
+                        hostId: host._id,
+                        name: name || 'My Venue',
+                        venueType: 'Nightclub',
+                        address: location || '',
+                        description: '',
+                        capacity: 0,
+                        openingTime: '10:00 PM',
+                        closingTime: '04:00 AM',
+                        rules: 'Strictly Elegant',
+                        heroImage: '',
+                        images: [],
+                        amenities: []
+                    });
+                    console.log('[completeProfile] Venue created');
+                }
+            } catch (bgError) {
+                console.error('[completeProfile] Background error:', bgError);
+            }
+        })();
 
     } catch (error) {
         console.error('[completeProfile] ❌ Error:', error);
