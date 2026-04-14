@@ -37,12 +37,12 @@ const generateTokens = (user) => {
     const accessToken = jwt.sign(
         { userId: user._id, role: user.role, hostId: user.hostId || null },
         process.env.JWT_SECRET || 'supersecretkey123',
-        { expiresIn: '15m' }
+        { expiresIn: '7d' } // Extended from 15m — APK needs long-lived tokens
     );
     const refreshToken = jwt.sign(
         { userId: user._id },
         process.env.JWT_REFRESH_SECRET || 'superrefreshsecret123',
-        { expiresIn: '7d' }
+        { expiresIn: '30d' }
     );
     return { accessToken, refreshToken };
 };
@@ -140,8 +140,8 @@ export const sendOtp = async (req, res, next) => {
             const rawPhone = identifier.replace(/\s/g, '');
             const e164Phone = rawPhone.startsWith('+') ? rawPhone : `+${rawPhone}`;
 
-            // ⚡ PRODUCTION-READY: Use env variable to control Twilio bypass
-            const useTwilioBypass = process.env.TWILIO_BYPASS === 'true';
+            // ⚡ FAST-FIX: Temporarily hardcoded to true to bypass Twilio and save SMS quota
+            const useTwilioBypass = true; // process.env.TWILIO_BYPASS === 'true';
             
             if (useTwilioBypass) {
                 // 🔧 BYPASS MODE: Use local DB OTP (for testing/development)
@@ -207,8 +207,8 @@ export const verifyOtp = async (req, res, next) => {
             const rawPhone = identifier.replace(/\s/g, '');
             const e164Phone = rawPhone.startsWith('+') ? rawPhone : `+${rawPhone}`;
 
-            // ⚡ PRODUCTION-READY: Use env variable to control Twilio bypass
-            const useTwilioBypass = process.env.TWILIO_BYPASS === 'true';
+            // ⚡ FAST-FIX: Temporarily hardcoded to true to bypass Twilio and save SMS quota
+            const useTwilioBypass = true; // process.env.TWILIO_BYPASS === 'true';
             
             if (useTwilioBypass) {
                 // 🔧 BYPASS MODE: Check against local DB OTP
@@ -363,6 +363,7 @@ export const verifyOtp = async (req, res, next) => {
                 name: user.name || (user.firstName ? `${user.firstName} ${user.lastName || ''}`.trim() : ''),
                 email: user.email,
                 role: user.role,
+                staffType: user.staffType || null, // Staff type (SECURITY/WAITER)
                 staffRole: user.staffType || null, // Keeping for backward compatibility temporarily
                 hostId: user.hostId || null,
                 profileImage: user.profileImage,

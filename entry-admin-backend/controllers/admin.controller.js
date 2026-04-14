@@ -3,10 +3,12 @@ import { Host } from '../models/Host.js';
 import { Event } from '../models/Event.js';
 import { Staff } from '../models/Staff.js';
 import { Booking } from '../models/booking.model.js';
+import { FoodOrder } from '../models/FoodOrder.js';
 import { Admin } from '../models/admin.model.js';
 import { cacheService } from '../services/cache.service.js';
 import { sendNotification } from '../services/notification.service.js';
 import { uploadToCloudinary } from '../config/cloudinary.config.js';
+import { getIO } from '../socket.js';
 
 // ── CREATE HOST ─────────────────────────────────────────────────────────────
 export const createHost = async (req, res, next) => {
@@ -200,9 +202,11 @@ export const verifyHost = async (req, res, next) => {
         }
 
         if (action === 'approve') {
+            console.log(`[Admin] Approving host ${id}. Current status:`, host.hostStatus);
             host.hostStatus = 'ACTIVE';
             host.isVerified = true;
             host.kycRejectionReason = '';
+            console.log(`[Admin] Updated host object. New status:`, host.hostStatus, 'isVerified:', host.isVerified);
             
             // Smart Notification
             await sendNotification(host._id, {
@@ -211,7 +215,33 @@ export const verifyHost = async (req, res, next) => {
                 type: 'SYSTEM'
             });
 
+            // 🔥 REAL-TIME: Emit socket event to notify host immediately
+            try {
+                const io = getIO();
+                if (io) {
+                    const roomName = id.toString();
+                    console.log(`[Admin] Emitting APPROVAL to room: ${roomName}`);
+                    
+                    io.to(roomName).emit('host:status:updated', { 
+                        hostStatus: 'ACTIVE',
+                        message: 'Your account has been verified and activated!'
+                    });
+                    
+                    const socketsInRoom = await io.in(roomName).fetchSockets();
+                    console.log(`[Admin] APPROVAL - Sockets in room ${roomName}:`, socketsInRoom.length);
+                    
+                    if (socketsInRoom.length === 0) {
+                        console.warn(`[Admin] ⚠️ APPROVAL - No sockets found for host ${id}`);
+                    } else {
+                        console.log(`[Admin] ✅ APPROVAL event sent to ${socketsInRoom.length} socket(s)`);
+                    }
+                }
+            } catch (socketErr) {
+                console.error('[Admin] Socket emit failed (approval):', socketErr.message);
+            }
+
         } else if (action === 'reject') {
+            console.log(`[Admin] Rejecting host ${id}. Reason:`, reason);
             host.hostStatus = 'REJECTED';
             host.kycRejectionReason = reason;
 
@@ -221,25 +251,65 @@ export const verifyHost = async (req, res, next) => {
                 message: `Your profile submission was rejected: ${reason}. Please update your documents.`,
                 type: 'SYSTEM' // Using existing system type, can add ALERT if supported
             });
+
+            // 🔥 REAL-TIME: Emit socket event to notify host immediately
+            try {
+                const io = getIO();
+                if (io) {
+                    const roomName = id.toString();
+                    console.log(`[Admin] Emitting REJECTION to room: ${roomName}`);
+                    
+                    io.to(roomName).emit('host:status:updated', { 
+                        hostStatus: 'REJECTED',
+                        message: 'Your verification was rejected',
+                        reason: reason
+                    });
+                    
+                    const socketsInRoom = await io.in(roomName).fetchSockets();
+                    console.log(`[Admin] REJECTION - Sockets in room ${roomName}:`, socketsInRoom.length);
+                }
+            } catch (socketErr) {
+                console.error('[Admin] Socket emit failed (rejection):', socketErr.message);
+            }
         }
 
-        await host.save();
+        console.log(`[Admin] Saving host to database...`);
+        const savedHost = await host.save();
+        console.log(`[Admin] ✅ Host saved successfully. DB status:`, savedHost.hostStatus, 'isVerified:', savedHost.isVerified);
 
-        // Proactive Cache Invalidation
+        // 🔥 VERIFY: Read back from DB to confirm save
+        const verifyHost = await Host.findById(id).select('hostStatus isVerified').lean();
+        console.log(`[Admin] 🧠 DB VERIFICATION - Status:`, verifyHost.hostStatus, 'isVerified:', verifyHost.isVerified);
+        
+        if (verifyHost.hostStatus !== savedHost.hostStatus) {
+            console.error(`[Admin] ❌ CRITICAL: DB mismatch! Saved: ${savedHost.hostStatus}, DB: ${verifyHost.hostStatus}`);
+        }
+
+        // Proactive Cache Invalidation - AGGRESSIVE with CORRECT keys
+        console.log(`[Admin] Clearing cache for host ${id}...`);
         await cacheService.delete(`auth_status_${id}`);
+        await cacheService.delete(`profile_${id}`);
+        await cacheService.delete(`host_profile_${id}`);
+        await cacheService.delete(`hostProfile_${id}`);
+        await cacheService.delete(`host:profile:${id}`); // ⚡ CRITICAL: Correct cache key format
         await cacheService.delete('admin_dashboard_stats');
-        await cacheService.delete('events_all_guest_v11'); 
+        await cacheService.delete('events_all_guest_v11');
+        console.log(`[Admin] ✅ Cache cleared successfully`);
 
         res.status(200).json({
             success: true,
             message: `Host ${action}d successfully.`,
             data: {
-                id: host._id,
-                hostStatus: host.hostStatus,
-                kycRejectionReason: host.kycRejectionReason
+                id: savedHost._id,
+                hostStatus: savedHost.hostStatus,
+                isVerified: savedHost.isVerified,
+                kycRejectionReason: savedHost.kycRejectionReason
             }
         });
+        
+        console.log(`[Admin] ✅ Response sent. Host ${id} is now ${savedHost.hostStatus}`);
     } catch (error) {
+        console.error('[Admin] ❌ Error in verifyHost:', error);
         next(error);
     }
 };
@@ -415,8 +485,8 @@ export const getBookingList = async (req, res, next) => {
 
         const [bookings, total] = await Promise.all([
             Booking.find(query)
-                .select('userId hostId eventId pricePaid guests status createdAt')
-                .populate('userId', 'name email profileImage')
+                .select('userId hostId eventId pricePaid guests ticketType status paymentStatus createdAt')
+                .populate('userId', 'name email phone profileImage')
                 .populate('hostId', 'name profileImage')
                 .populate('eventId', 'title')
                 .skip(skip)
@@ -466,6 +536,25 @@ export const getAdminStats = async (req, res, next) => {
         };
 
         res.status(200).json({ success: true, data: stats });
+    } catch (error) {
+        next(error);
+    }
+};
+
+export const getAdminProfile = async (req, res, next) => {
+    try {
+        const adminId = req.user.id;
+        const CACHE_KEY = `admin_self_prof_${adminId}`;
+
+        let cached = await cacheService.get(CACHE_KEY);
+        if (cached) return res.status(200).json({ success: true, data: cached });
+
+        const admin = await Admin.findById(adminId).select('name email username role profileImage').lean();
+        if (!admin) return res.status(404).json({ success: false, message: 'Admin not found' });
+
+        await cacheService.set(CACHE_KEY, admin, 300); // cache 5 min
+        
+        res.status(200).json({ success: true, data: admin });
     } catch (error) {
         next(error);
     }
@@ -567,7 +656,35 @@ export const toggleHostRegistryStatus = async (req, res, next) => {
             await Event.updateMany({ hostId: id, status: 'LIVE' }, { status: 'PAUSED' });
         }
 
+        // 🔥 REAL-TIME: Emit socket event to notify host immediately
+        try {
+            const io = getIO();
+            if (io) {
+                // Emit to the specific host's room
+                const roomName = id.toString();
+                console.log(`[Admin] Emitting host:status:updated to room: ${roomName}, status: ${status}`);
+                
+                io.to(roomName).emit('host:status:updated', { 
+                    hostStatus: status,
+                    message: status === 'ACTIVE' ? 'Your account has been activated!' : 'Your account has been suspended'
+                });
+                
+                // Also emit to all connected sockets for this host (backup)
+                const socketsInRoom = await io.in(roomName).fetchSockets();
+                console.log(`[Admin] Sockets in room ${roomName}:`, socketsInRoom.length);
+                
+                if (socketsInRoom.length === 0) {
+                    console.warn(`[Admin] ⚠️ No sockets found in room ${roomName} - host may not be connected`);
+                } else {
+                    console.log(`[Admin] ✅ Event emitted to ${socketsInRoom.length} socket(s)`);
+                }
+            }
+        } catch (socketErr) {
+            console.error('[Admin] Socket emit failed:', socketErr.message);
+        }
+
         await cacheService.delete(`auth_status_${id}`);
+        await cacheService.delete(`profile_${id}`); // ⚡ CRITICAL: Clear host profile cache
         await cacheService.delete('events_all_guest_v11');
         res.status(200).json({ success: true, message: `Host status updated to ${status}` });
     } catch (error) {

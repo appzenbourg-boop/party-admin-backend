@@ -23,9 +23,9 @@ const ckey = (type, hostId) => `host:${type}:${hostId}`;
 export const getHostProfile = async (req, res, next) => {
     try {
         const hostId = req.user.id;
-        const CACHE_KEY = ckey('profile', hostId);
-        const cached = await cacheService.get(CACHE_KEY);
-        if (cached) return res.status(200).json({ success: true, data: cached });
+        
+        // ⚡ ALWAYS fetch fresh from DB - NO CACHE
+        console.log('[getHostProfile] 🔍 Fetching fresh data from DB for host:', hostId);
 
         // ⚡ OPTIMIZED: Parallel queries with lean() for faster performance
         let [hostUser, venue] = await Promise.all([
@@ -63,7 +63,15 @@ export const getHostProfile = async (req, res, next) => {
             hostStatus: hostUser.hostStatus || 'CREATED'
         };
 
-        await cacheService.set(CACHE_KEY, profileData, 300); // 5 min cache
+        console.log('[getHostProfile] ✅ Fresh data from DB. hostStatus:', profileData.hostStatus);
+
+        // Set no-cache headers
+        res.set({
+            'Cache-Control': 'no-store, no-cache, must-revalidate, private',
+            'Pragma': 'no-cache',
+            'Expires': '0'
+        });
+
         res.status(200).json({ success: true, data: profileData });
     } catch (error) { next(error); }
 };
@@ -112,12 +120,16 @@ export const completeProfile = async (req, res, next) => {
         const { aadhaarUrl, panUrl, profileImage, name, dob, location } = req.body;
         const hostId = req.user.id;
 
+        console.log('[completeProfile] Starting for host:', hostId);
+
         const host = await Host.findById(hostId);
         if (!host) {
             return res.status(404).json({ success: false, message: 'Host not found' });
         }
 
-        if (host.hostStatus !== 'INVITED') {
+        console.log('[completeProfile] Current host status:', host.hostStatus);
+
+        if (host.hostStatus !== 'INVITED' && host.hostStatus !== 'CREATED') {
             return res.status(403).json({ success: false, message: 'Onboarding is only available for invited hosts.' });
         }
 
@@ -125,22 +137,42 @@ export const completeProfile = async (req, res, next) => {
             return res.status(400).json({ success: false, message: 'KYC documents already submitted for review.' });
         }
 
-        // Aggressive Optimization: Send instant response back to the user (< 50ms)
-        // Fire-and-forget the heavy Cloudinary uploads + DB Saves into the background.
+        // ⚡ INSTANT RESPONSE - Update status immediately
+        host.hostStatus = 'KYC_PENDING';
+        host.kycSubmitted = true;
+        host.profileCompletion = 100;
+        if (name) host.name = name;
+        if (dob) host.dateOfBirth = dob;
+        if (location) {
+            host.location = host.location || {};
+            host.location.address = location;
+        }
+
+        await host.save();
+        console.log('[completeProfile] ✅ Status updated to KYC_PENDING');
+
+        // Clear cache immediately
+        await cacheService.delete(ckey('profile', hostId));
+        await cacheService.delete(`auth_status_${hostId}`);
+        await cacheService.delete(`host_profile_${hostId}`);
+        await cacheService.delete(`hostProfile_${hostId}`);
+
+        // ✅ Send instant response
         res.status(200).json({
             success: true,
-            message: 'Profile submitted for review. Processing documents...',
+            message: 'Profile submitted for review successfully!',
             data: {
                 id: host._id,
-                hostStatus: 'KYC_PENDING', // Optimistic status
+                hostStatus: 'KYC_PENDING',
                 profileCompletion: 100
             }
         });
 
-        // Background ASYNC Processing
+        console.log('[completeProfile] ✅ Response sent. Starting background upload...');
+
+        // 🔥 BACKGROUND: Upload images and update documents
         (async () => {
             try {
-                // Parallelizing Cloudinary Uploads for Performance
                 const uploadTask = async (data, folder) => {
                     if (data && data.startsWith('data:')) {
                         return await uploadToCloudinary(data, folder);
@@ -154,46 +186,34 @@ export const completeProfile = async (req, res, next) => {
                     uploadTask(panUrl, 'host-kyc')
                 ]);
 
-                // Update Host Fields
-                if (name) host.name = name;
-                if (dob) host.dateOfBirth = dob;
-                if (location) {
-                    host.location = host.location || {};
-                    host.location.address = location;
-                }
-                if (finalProfileImage) host.profileImage = finalProfileImage;
+                console.log('[completeProfile] Background uploads complete');
 
-                // kycDocs logic
+                // Update with uploaded URLs
+                const updateData = {};
+                if (finalProfileImage) updateData.profileImage = finalProfileImage;
+                
                 const kycDocs = [];
                 if (finalAadhaar) kycDocs.push({ type: 'AADHAR', url: finalAadhaar, status: 'PENDING', uploadedAt: new Date() });
                 if (finalPan) kycDocs.push({ type: 'PAN', url: finalPan, status: 'PENDING', uploadedAt: new Date() });
                 
                 if (kycDocs.length > 0) {
-                    host.kyc = host.kyc || {};
-                    host.kyc.documents = kycDocs;
-                    host.markModified('kyc');
-                    host.markModified('kyc.documents');
+                    updateData['kyc.documents'] = kycDocs;
                 }
 
-                host.profileCompletion = 100;
-                host.hostStatus = 'KYC_PENDING';
-                host.kycSubmitted = true;
+                await Host.findByIdAndUpdate(hostId, { $set: updateData });
+                console.log('[completeProfile] ✅ Background update complete');
 
-                await host.save();
-                
-                // ⚡ CLEAR PROFILE CACHE so fresh data is fetched
-                await cacheService.delete(ckey('profile', host._id));
-                
-                // ⚡ AUTO-CREATE VENUE PROFILE from onboarding data
-                // Check if venue already exists
+                // Clear cache again after upload
+                await cacheService.delete(ckey('profile', hostId));
+
+                // Auto-create venue
                 const existingVenue = await Venue.findOne({ hostId: host._id });
                 if (!existingVenue) {
-                    // Create basic venue profile with onboarding data
                     await Venue.create({
                         hostId: host._id,
-                        name: name || 'My Venue', // Use host name as default venue name
-                        venueType: 'Nightclub', // Default type
-                        address: location || '', // Use onboarding location
+                        name: name || 'My Venue',
+                        venueType: 'Nightclub',
+                        address: location || '',
                         description: '',
                         capacity: 0,
                         openingTime: '10:00 PM',
@@ -203,16 +223,15 @@ export const completeProfile = async (req, res, next) => {
                         images: [],
                         amenities: []
                     });
-                    console.log(`[SYS] Auto-created venue profile for Host: ${host._id}`);
+                    console.log('[completeProfile] Venue created');
                 }
-                
-                console.log(`[SYS] Background KYC upload completed for Host: ${host._id}`);
             } catch (bgError) {
-                console.error(`[SYS CATCH] Background KYC upload failed for Host: ${host._id}`, bgError);
+                console.error('[completeProfile] Background error:', bgError);
             }
         })();
 
     } catch (error) {
+        console.error('[completeProfile] ❌ Error:', error);
         next(error);
     }
 };

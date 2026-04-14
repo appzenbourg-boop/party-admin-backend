@@ -19,7 +19,8 @@ import {
     toggleUserStatus,
     deleteHost,
     toggleHostRegistryStatus,
-    deleteUser
+    deleteUser,
+    getAdminProfile
 } from '../controllers/admin.controller.js';
 
 const router = express.Router();
@@ -27,6 +28,7 @@ const router = express.Router();
 // All routes require authentication and admin privileges
 router.use(protect, requireAdmin);
 
+router.get('/profile', getAdminProfile);
 router.put('/profile/update', updateAdminProfile);
 router.post('/hosts/create', createHost);
 router.get('/hosts', getHostList);

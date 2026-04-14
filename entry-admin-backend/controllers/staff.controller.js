@@ -1,5 +1,51 @@
 import { FoodOrder } from '../models/FoodOrder.js';
+import { Staff } from '../models/Staff.js';
 import { getIO } from '../socket.js';
+
+export const getProfile = async (req, res, next) => {
+    try {
+        const staff = await Staff.findById(req.user.id)
+            .select('-password -refreshToken')
+            .populate('hostId', 'name businessName')
+            .lean();
+
+        if (!staff) {
+            return res.status(404).json({ success: false, message: 'Staff profile not found' });
+        }
+
+        res.status(200).json({ success: true, data: staff });
+    } catch (err) {
+        next(err);
+    }
+};
+
+export const updateProfile = async (req, res, next) => {
+    try {
+        const { name, username, profileImage } = req.body;
+        
+        const updateData = {};
+        if (name) updateData.name = name;
+        if (username) updateData.username = username;
+        if (profileImage) updateData.profileImage = profileImage;
+
+        const staff = await Staff.findByIdAndUpdate(
+            req.user.id,
+            { $set: updateData },
+            { new: true, runValidators: true }
+        )
+        .select('-password -refreshToken')
+        .populate('hostId', 'name businessName')
+        .lean();
+
+        if (!staff) {
+            return res.status(404).json({ success: false, message: 'Staff profile not found' });
+        }
+
+        res.status(200).json({ success: true, message: 'Profile updated', data: staff });
+    } catch (err) {
+        next(err);
+    }
+};
 
 export const getAvailableOrders = async (req, res, next) => {
     try {
