@@ -277,6 +277,14 @@ export const verifyHost = async (req, res, next) => {
         const savedHost = await host.save();
         console.log(`[Admin] ✅ Host saved successfully. DB status:`, savedHost.hostStatus, 'isVerified:', savedHost.isVerified);
 
+        // 🔥 VERIFY: Read back from DB to confirm save
+        const verifyHost = await Host.findById(id).select('hostStatus isVerified').lean();
+        console.log(`[Admin] 🧠 DB VERIFICATION - Status:`, verifyHost.hostStatus, 'isVerified:', verifyHost.isVerified);
+        
+        if (verifyHost.hostStatus !== savedHost.hostStatus) {
+            console.error(`[Admin] ❌ CRITICAL: DB mismatch! Saved: ${savedHost.hostStatus}, DB: ${verifyHost.hostStatus}`);
+        }
+
         // Proactive Cache Invalidation - AGGRESSIVE with CORRECT keys
         console.log(`[Admin] Clearing cache for host ${id}...`);
         await cacheService.delete(`auth_status_${id}`);

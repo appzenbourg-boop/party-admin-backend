@@ -23,19 +23,9 @@ const ckey = (type, hostId) => `host:${type}:${hostId}`;
 export const getHostProfile = async (req, res, next) => {
     try {
         const hostId = req.user.id;
-        const CACHE_KEY = ckey('profile', hostId);
         
-        // ⚡ DISABLED: Skip cache completely for instant updates
-        // const forceRefresh = req.query.refresh === 'true';
-        // if (!forceRefresh) {
-        //     const cached = await cacheService.get(CACHE_KEY);
-        //     if (cached) {
-        //         console.log('[getHostProfile] Returning cached data:', cached.hostStatus);
-        //         return res.status(200).json({ success: true, data: cached });
-        //     }
-        // }
-
-        console.log('[getHostProfile] Fetching fresh data from DB for host:', hostId);
+        // ⚡ ALWAYS fetch fresh from DB - NO CACHE
+        console.log('[getHostProfile] 🔍 Fetching fresh data from DB for host:', hostId);
 
         // ⚡ OPTIMIZED: Parallel queries with lean() for faster performance
         let [hostUser, venue] = await Promise.all([
@@ -73,9 +63,15 @@ export const getHostProfile = async (req, res, next) => {
             hostStatus: hostUser.hostStatus || 'CREATED'
         };
 
-        console.log('[getHostProfile] Fresh data from DB. hostStatus:', profileData.hostStatus);
+        console.log('[getHostProfile] ✅ Fresh data from DB. hostStatus:', profileData.hostStatus);
 
-        await cacheService.set(CACHE_KEY, profileData, 300); // 5 min cache
+        // Set no-cache headers
+        res.set({
+            'Cache-Control': 'no-store, no-cache, must-revalidate, private',
+            'Pragma': 'no-cache',
+            'Expires': '0'
+        });
+
         res.status(200).json({ success: true, data: profileData });
     } catch (error) { next(error); }
 };
