@@ -673,17 +673,18 @@ export const getMedia = async (req, res, next) => {
 
 export const uploadMedia = async (req, res, next) => {
     try {
-        const { url, type, fileName, fileSize, mimeType } = req.body;
+        const { url, type, category, fileName, fileSize, mimeType } = req.body;
         const media = await Media.create({
             hostId: req.user.id,
             url,
             type: type || 'image',
-            status: 'Pending', // Back to pending until saved
+            category: category || 'interior', // 'interior' | 'events'
+            status: 'Approved',               // ✅ Auto-approved — no admin review needed
             fileName,
             fileSize,
             mimeType
         });
-        res.status(201).json({ success: true, data: media, message: 'Media uploaded for approval' });
+        res.status(201).json({ success: true, data: media, message: 'Media uploaded successfully' });
     } catch (error) {
         next(error);
     }

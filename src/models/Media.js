@@ -4,6 +4,7 @@ const mediaSchema = new mongoose.Schema({
     hostId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
     url: { type: String, required: true },
     type: { type: String, enum: ['image', 'video'], default: 'image' },
+    category: { type: String, enum: ['interior', 'events'], default: 'interior' },
     status: { type: String, enum: ['Approved', 'Pending', 'Rejected'], default: 'Pending' },
     fileName: { type: String },
     fileSize: { type: Number },

@@ -715,3 +715,38 @@ export const deleteUser = async (req, res, next) => {
         next(error);
     }
 };
+
+// ── TOGGLE STAFF STATUS ────────────────────────────────────────────────────
+export const toggleStaffStatus = async (req, res, next) => {
+    try {
+        const { id } = req.params;
+        const { isActive } = req.body;
+
+        const staff = await Staff.findById(id);
+        if (!staff) return res.status(404).json({ success: false, message: 'Personnel not found' });
+
+        staff.isActive = isActive;
+        await staff.save();
+
+        res.status(200).json({
+            success: true,
+            message: `Staff member ${isActive ? 'activated' : 'suspended'}`,
+            data: { id: staff._id, isActive: staff.isActive }
+        });
+    } catch (error) {
+        next(error);
+    }
+};
+
+// ── DELETE STAFF ───────────────────────────────────────────────────────────
+export const deleteStaff = async (req, res, next) => {
+    try {
+        const { id } = req.params;
+        const staff = await Staff.findByIdAndDelete(id);
+        if (!staff) return res.status(404).json({ success: false, message: 'Personnel not found' });
+
+        res.status(200).json({ success: true, message: 'Personnel permanently removed from registry' });
+    } catch (error) {
+        next(error);
+    }
+};

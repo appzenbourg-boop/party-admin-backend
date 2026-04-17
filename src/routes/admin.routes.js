@@ -9,6 +9,8 @@ import {
     suspendHost, 
     toggleEventFlags,
     getAllStaff,
+    toggleStaffStatus,
+    deleteStaff,
     getUserList,
     getUserProfile,
     getBookingList,
@@ -41,6 +43,8 @@ router.put('/hosts/:id/verify', verifyHost);
 router.put('/hosts/:id/suspend', suspendHost);
 router.put('/events/:eventId/flags', toggleEventFlags);
 router.get('/staff', getAllStaff);
+router.put('/staff/:id/status', toggleStaffStatus);
+router.delete('/staff/:id', deleteStaff);
 router.get('/users', getUserList);
 router.get('/users/:id', getUserProfile);
 router.put('/users/:id/status', toggleUserStatus);
