@@ -9,7 +9,7 @@ import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
 import { registerSchema, loginSchema, refreshTokenSchema, forgotPasswordSchema, resetPasswordSchema, sendOtpSchema, verifyOtpSchema } from '../validators/auth.validator.js';
 import sendEmail from '../utils/sendEmail.js';
-import { sendSmsOtp, verifySmsOtp } from '../services/twilio.service.js';
+import { sendSmsOtp, verifySmsOtp } from '../services/sms.service.js';
 import { cacheService } from '../services/cache.service.js';
 
 // ── Username Generation for Google Users ────────────────────────────────────
@@ -140,10 +140,10 @@ export const sendOtp = async (req, res, next) => {
             const rawPhone = identifier.replace(/\s/g, '');
             const e164Phone = rawPhone.startsWith('+') ? rawPhone : `+${rawPhone}`;
 
-            // ⚡ FAST-FIX: Temporarily hardcoded to true to bypass Twilio and save SMS quota
-            const useTwilioBypass = true; // process.env.TWILIO_BYPASS === 'true';
+            // ⚡ FAST-FIX: Use env var to determine if we should bypass OTP
+            const useOtpBypass = process.env.OTP_BYPASS === 'true';
             
-            if (useTwilioBypass) {
+            if (useOtpBypass) {
                 // 🔧 BYPASS MODE: Use local DB OTP (for testing/development)
                 const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
                 await Otp.findOneAndUpdate(
@@ -159,19 +159,19 @@ export const sendOtp = async (req, res, next) => {
                 });
             }
 
-            // 🔒 PRODUCTION: Use Twilio Verify with retry logic
+            // 🔒 PRODUCTION: Use 2Factor Verify with retry logic
             try {
                 await sendSmsOtp(e164Phone);
-                console.log(`[AUTH] Twilio OTP sent to ${e164Phone}`);
+                console.log(`[AUTH] 2Factor OTP sent to ${e164Phone}`);
                 res.status(200).json({ 
                     success: true, 
                     message: 'OTP sent to your phone via SMS', 
                     data: { type: 'phone' } 
                 });
-            } catch (twilioErr) {
-                console.error('[AUTH] Twilio sendSmsOtp failed:', twilioErr.message);
+            } catch (smsErr) {
+                console.error('[AUTH] 2Factor sendSmsOtp failed:', smsErr.message);
                 
-                // Fallback to DB OTP if Twilio fails (graceful degradation)
+                // Fallback to DB OTP if 2Factor fails (graceful degradation)
                 const fallbackOtp = Math.floor(100000 + Math.random() * 900000).toString();
                 await Otp.findOneAndUpdate(
                     { identifier: e164Phone },
@@ -207,10 +207,10 @@ export const verifyOtp = async (req, res, next) => {
             const rawPhone = identifier.replace(/\s/g, '');
             const e164Phone = rawPhone.startsWith('+') ? rawPhone : `+${rawPhone}`;
 
-            // ⚡ FAST-FIX: Temporarily hardcoded to true to bypass Twilio and save SMS quota
-            const useTwilioBypass = true; // process.env.TWILIO_BYPASS === 'true';
+            // ⚡ FAST-FIX: Use env var to determine if we should bypass OTP
+            const useOtpBypass = process.env.OTP_BYPASS === 'true';
             
-            if (useTwilioBypass) {
+            if (useOtpBypass) {
                 // 🔧 BYPASS MODE: Check against local DB OTP
                 const currentOtp = await Otp.findOne({ identifier: e164Phone, otp });
                 if (currentOtp) {
@@ -220,11 +220,11 @@ export const verifyOtp = async (req, res, next) => {
                     return res.status(401).json({ success: false, message: 'Invalid or expired OTP', data: {} });
                 }
             } else {
-                // 🔒 PRODUCTION: Verify via Twilio with fallback
+                // 🔒 PRODUCTION: Verify via 2Factor with fallback
                 try {
                     verified = await verifySmsOtp(e164Phone, otp);
                     if (!verified) {
-                        // Try DB fallback if Twilio says invalid
+                        // Try DB fallback if 2Factor says invalid
                         const dbOtp = await Otp.findOne({ identifier: e164Phone, otp });
                         if (dbOtp) {
                             verified = true;
@@ -233,8 +233,8 @@ export const verifyOtp = async (req, res, next) => {
                             return res.status(401).json({ success: false, message: 'Invalid or expired OTP', data: {} });
                         }
                     }
-                } catch (twilioErr) {
-                    console.error('[AUTH] Twilio verifySmsOtp error:', twilioErr.message);
+                } catch (smsErr) {
+                    console.error('[AUTH] 2Factor verifySmsOtp error:', smsErr.message);
                     // Fallback to DB OTP check
                     const dbOtp = await Otp.findOne({ identifier: e164Phone, otp });
                     if (dbOtp) {
