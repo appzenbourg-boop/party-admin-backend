@@ -485,7 +485,7 @@ export const getBookingList = async (req, res, next) => {
 
         const [bookings, total] = await Promise.all([
             Booking.find(query)
-                .select('userId hostId eventId pricePaid guests ticketType status paymentStatus createdAt')
+                .select('userId hostId eventId pricePaid guests guestsEntered ticketType status paymentStatus createdAt')
                 .populate('userId', 'name email phone profileImage')
                 .populate('hostId', 'name profileImage')
                 .populate('eventId', 'title')
@@ -513,12 +513,13 @@ export const getBookingList = async (req, res, next) => {
 export const getAdminStats = async (req, res, next) => {
     try {
 
-        const [userCount, activeHosts, totalHosts, pendingHosts, totalBookings, revenueAgg] = await Promise.all([
+        const [userCount, activeHosts, totalHosts, pendingHosts, totalBookings, checkedInCount, revenueAgg] = await Promise.all([
             User.countDocuments({ role: 'user' }),
             Host.countDocuments({ role: 'HOST', hostStatus: 'ACTIVE' }),
             Host.countDocuments({ role: 'HOST' }),
             Host.countDocuments({ hostStatus: { $in: ['INVITED', 'KYC_PENDING'] } }),
-            Booking.countDocuments({ status: { $in: ['approved', 'active', 'completed'] } }),
+            Booking.countDocuments({ status: { $in: ['approved', 'active', 'completed', 'checked_in'] } }),
+            Booking.countDocuments({ status: 'checked_in' }),
             Booking.aggregate([
                 { $match: { paymentStatus: 'paid', status: { $ne: 'cancelled' } } },
                 { $group: { _id: null, total: { $sum: '$pricePaid' } } }
@@ -531,6 +532,7 @@ export const getAdminStats = async (req, res, next) => {
             hosts: totalHosts,
             pendingHosts,
             bookings: totalBookings,
+            checkedIn: checkedInCount,
             totalRevenue: revenueAgg[0]?.total || 0,
             updatedAt: new Date()
         };
