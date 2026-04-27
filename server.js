@@ -13,25 +13,25 @@ import xss from 'xss-clean';
 
 dotenv.config();
 
-import { logger } from './src/logs/logger.js';
+import { logger } from './entry-admin-backend/logs/logger.js';
 
 const NODE_ENV  = process.env.NODE_ENV || 'development';
 const MONGO_URI = process.env.MONGO_URI;
 const PORT      = process.env.PORT || 3002;
 
 // ── Auth (shared — host/admin also log in via OTP) ────────────────────────────
-import authRoutes    from './src/routes/auth.routes.js';
+import authRoutes    from './entry-admin-backend/routes/auth.routes.js';
 
 // ── Admin / Host / Staff Routes ───────────────────────────────────────────────
-import adminRoutes    from './src/routes/admin.routes.js';
-import adminChatRoutes from './src/routes/adminChat.routes.js';
-import analyticsRoutes from './src/routes/analytics.routes.js';
-import hostRoutes     from './src/routes/host.routes.js';
-import staffRoutes    from './src/routes/staff.routes.js';
-import waiterRoutes   from './src/routes/waiter.routes.js';
-import securityRoutes from './src/routes/security.routes.js';
-import chatRoutes     from './src/routes/chat.routes.js';
-import { errorHandler, notFoundHandler } from './src/middleware/error.js';
+import adminRoutes    from './entry-admin-backend/routes/admin.routes.js';
+import adminChatRoutes from './entry-admin-backend/routes/adminChat.routes.js';
+import analyticsRoutes from './entry-admin-backend/routes/analytics.routes.js';
+import hostRoutes     from './entry-admin-backend/routes/host.routes.js';
+import staffRoutes    from './entry-admin-backend/routes/staff.routes.js';
+import waiterRoutes   from './entry-admin-backend/routes/waiter.routes.js';
+import securityRoutes from './entry-admin-backend/routes/security.routes.js';
+import chatRoutes     from './entry-admin-backend/routes/chat.routes.js';
+import { errorHandler, notFoundHandler } from './entry-admin-backend/middleware/error.js';
 
 // ── App Setup ─────────────────────────────────────────────────────────────────
 const app = express();
@@ -144,7 +144,7 @@ const startServer = async () => {
         await mongoose.connect(MONGO_URI, { serverSelectionTimeoutMS: 5000, socketTimeoutMS: 45000, maxPoolSize: 50 });
         logger.info('✔ MongoDB connected (admin-api)');
 
-        const { initSocket } = await import('./src/socket.js');
+        const { initSocket } = await import('./entry-admin-backend/socket.js');
 
         const server = app.listen(PORT, '0.0.0.0', () => logger.info(`🚀 Admin API on port ${PORT}`));
         server.keepAliveTimeout = 65000;
@@ -154,10 +154,10 @@ const startServer = async () => {
         // Pre-warm admin stats cache
         setTimeout(async () => {
             try {
-                const { Host }    = await import('./src/models/Host.js');
-                const { Booking } = await import('./src/models/booking.model.js');
-                const { User }    = await import('./src/models/user.model.js');
-                const { cacheService } = await import('./src/services/cache.service.js');
+                const { Host }    = await import('./entry-admin-backend/models/Host.js');
+                const { Booking } = await import('./entry-admin-backend/models/booking.model.js');
+                const { User }    = await import('./entry-admin-backend/models/user.model.js');
+                const { cacheService } = await import('./entry-admin-backend/services/cache.service.js');
                 const [userCount, activeHosts, totalHosts, pendingHosts, totalBookings, revenueAgg] = await Promise.all([
                     User.countDocuments({ role: 'user' }),
                     Host.countDocuments({ role: 'HOST', hostStatus: 'ACTIVE' }),
