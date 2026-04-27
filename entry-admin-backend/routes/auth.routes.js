@@ -157,7 +157,7 @@ router.get('/callback/google',
             next();
         })(req, res, next);
     },
-    (req, res) => {
+    async (req, res) => {
         try {
             console.log('--- [BACKEND DEBUG] Handling Final Callback ---');
             const user = req.user;
@@ -179,11 +179,27 @@ router.get('/callback/google',
             const token = jwt.sign(
                 { userId: user._id, role: user.role, hostId: user.hostId || null },
                 process.env.JWT_SECRET || 'supersecretkey123',
-                { expiresIn: '7d' }
+                { expiresIn: '30d' }
             );
+
+            const refreshToken = jwt.sign(
+                { userId: user._id },
+                process.env.JWT_REFRESH_SECRET || 'superrefreshsecret123',
+                { expiresIn: '90d' }
+            );
+
+            await user.constructor.updateOne(
+                { _id: user._id }, 
+                { $set: { refreshToken } }
+            );
+
+            // Clear cached profile data
+            const { cacheService } = await import('../services/cache.service.js');
+            await cacheService.delete(cacheService.formatKey('profile_v2', user._id.toString()));
 
             const params = new URLSearchParams({
                 token,
+                refreshToken,
                 role:                user.role || 'user',
                 name:                user.name || '',
                 email:               user.email || '',
@@ -191,6 +207,9 @@ router.get('/callback/google',
                 onboardingCompleted: 'true',   // ✅ Google users always skip onboarding
                 hostId:              user.hostId?.toString() || '',
                 username:            user.username || '',
+                phone:               user.phone || '',
+                gender:              user.gender || '',
+                userId:              user._id.toString(),
             });
 
             const deepLink = `${redirectUri}?${params.toString()}`;
