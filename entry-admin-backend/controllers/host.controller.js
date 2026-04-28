@@ -445,7 +445,7 @@ export const getStaff = async (req, res, next) => {
 export const addStaff = async (req, res, next) => {
     try {
         const {
-            fullName, firstName, lastName, username, email, phone, staffType, password, isActive
+            fullName, firstName, lastName, username, email, phone, staffType, password, isActive, profileImage
         } = req.body;
 
         if (!fullName || !staffType || (!phone && !email)) {
@@ -478,7 +478,8 @@ export const addStaff = async (req, res, next) => {
             staffType,
             password: password || undefined,
             isActive: isActive !== undefined ? isActive : true,
-            emailVerified: false
+            emailVerified: false,
+            profileImage: profileImage || ''
         };
 
         const staff = await Staff.create(staffData);
@@ -504,7 +505,7 @@ export const updateStaff = async (req, res, next) => {
     try {
         const { staffId } = req.params;
         const {
-            fullName, username, email, phone, staffType, password, isActive
+            fullName, username, email, phone, staffType, password, isActive, profileImage
         } = req.body;
 
         const updateData = {};
@@ -514,6 +515,7 @@ export const updateStaff = async (req, res, next) => {
         if (phone !== undefined) updateData.phone = phone;
         if (staffType !== undefined) updateData.staffType = staffType;
         if (isActive !== undefined) updateData.isActive = isActive;
+        if (profileImage !== undefined) updateData.profileImage = profileImage;
 
         // Re-hash password if changed
         if (password) {

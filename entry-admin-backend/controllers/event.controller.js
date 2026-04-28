@@ -154,7 +154,7 @@ export const getEvents = async (req, res, next) => {
         if (cached) return res.status(200).json({ success: true, events: cached });
 
         const events = await Event.find({ hostId })
-            .select('title date startTime coverImage status attendeeCount locationVisibility isLocationRevealed displayPrice')
+            .select('title date startTime coverImage status attendeeCount locationVisibility isLocationRevealed displayPrice revealTime bookingOpenDate')
             .sort({ date: -1 }) // Sort newest first
             .lean();
         
