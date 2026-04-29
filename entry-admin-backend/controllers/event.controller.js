@@ -116,16 +116,37 @@ export const getEventById = async (req, res, next) => {
 export const updateEventStatus = async (req, res, next) => {
     try {
         const { eventId } = req.params;
-        const { status } = req.body;
-        const updated = await Event.findByIdAndUpdate(eventId, { status }, { new: true });
+        const { status }  = req.body;
 
+        // Whitelist allowed statuses
+        const VALID = ['LIVE', 'PAUSED', 'DRAFT', 'ENDED'];
+        if (!VALID.includes(status)) {
+            return res.status(400).json({ success: false, message: `Invalid status. Allowed: ${VALID.join(', ')}` });
+        }
+        if (!mongoose.Types.ObjectId.isValid(eventId)) {
+            return res.status(400).json({ success: false, message: 'Invalid event ID' });
+        }
+
+        const updated = await Event.findOneAndUpdate(
+            { _id: eventId, hostId: req.user.id }, // ownership check
+            { status },
+            { new: true, select: '_id title status' }
+        );
+
+        if (!updated) return res.status(404).json({ success: false, message: 'Event not found or unauthorised' });
+
+        // ⚡ Bust host events cache so changes show immediately on Manage Events screen
+        cacheService.delete(`host_events_${req.user.id}`).catch(() => {});
+        cacheService.delete(`dashboard_stats_${req.user.id}`).catch(() => {});
+
+        // Notify host on publish (non-blocking)
         if (status === 'LIVE') {
             const { sendNotification } = await import('../services/notification.service.js');
-            await sendNotification(req.user.id, {
-                title: 'Event Published! 🎉',
+            sendNotification(req.user.id, {
+                title:   'Event Published!',
                 message: `Your event "${updated.title}" is now live and accepting bookings.`,
-                type: 'SYSTEM'
-            });
+                type:    'SYSTEM'
+            }).catch(() => {});
         }
 
         return res.status(200).json({ success: true, status: updated.status });
@@ -137,9 +158,22 @@ export const updateEventStatus = async (req, res, next) => {
 export const deleteEvent = async (req, res, next) => {
     try {
         const { eventId } = req.params;
-        await Event.findByIdAndDelete(eventId);
 
-        return res.status(200).json({ success: true, message: "Event Cancelled" });
+        if (!mongoose.Types.ObjectId.isValid(eventId)) {
+            return res.status(400).json({ success: false, message: 'Invalid event ID' });
+        }
+
+        // Ownership check — host can only delete their own events
+        const deleted = await Event.findOneAndDelete({ _id: eventId, hostId: req.user.id });
+        if (!deleted) {
+            return res.status(404).json({ success: false, message: 'Event not found or unauthorised' });
+        }
+
+        // Bust caches
+        cacheService.delete(`host_events_${req.user.id}`).catch(() => {});
+        cacheService.delete(`dashboard_stats_${req.user.id}`).catch(() => {});
+
+        return res.status(200).json({ success: true, message: 'Event cancelled' });
     } catch (error) {
         next(error);
     }
@@ -150,19 +184,47 @@ export const getEvents = async (req, res, next) => {
         const hostId = req.user.id;
         const CACHE_KEY = `host_events_${hostId}`;
         
-        // ⚡ Check cache first
+        // ⚡ Cache-first
         const cached = await cacheService.get(CACHE_KEY);
         if (cached) return res.status(200).json({ success: true, events: cached });
 
         const events = await Event.find({ hostId })
-            .select('title date endDate startTime coverImage status attendeeCount locationVisibility isLocationRevealed displayPrice revealTime bookingOpenDate')
-            .sort({ date: -1 }) // Sort newest first
+            .select('title date endDate startTime endTime coverImage status attendeeCount tickets locationVisibility isLocationRevealed displayPrice revealTime bookingOpenDate')
+            .sort({ date: -1 })
             .lean();
+
+        // Early exit — no events, skip aggregation
+        if (!events.length) {
+            cacheService.set(CACHE_KEY, [], 60).catch(() => {});
+            return res.status(200).json({ success: true, events: [] });
+        }
+
+        // ── Real booking stats from Booking collection ─────────────────────
+        // ticket.sold is never auto-updated — we aggregate from actual Booking docs
+        const eventIds = events.map(e => e._id);
+        const bookingStats = await Booking.aggregate([
+            { $match: { eventId: { $in: eventIds }, status: { $nin: ['cancelled', 'rejected'] } } },
+            { $group: {
+                _id:          '$eventId',
+                totalBooked:  { $sum: { $ifNull: ['$guests', 1] } },
+                totalRevenue: { $sum: { $ifNull: ['$pricePaid', 0] } }
+            }}
+        ]).allowDiskUse(true);
+
+        // O(1) lookup map
+        const statsMap = Object.fromEntries(
+            bookingStats.map(s => [s._id.toString(), { totalBooked: s.totalBooked, totalRevenue: s.totalRevenue }])
+        );
+
+        const eventsWithStats = events.map(event => ({
+            ...event,
+            _bookingStats: statsMap[event._id.toString()] ?? { totalBooked: 0, totalRevenue: 0 }
+        }));
+
+        // Fire-and-forget cache — don't block response
+        cacheService.set(CACHE_KEY, eventsWithStats, 120).catch(() => {});
         
-        // ⚡ Cache for 2 minutes
-        await cacheService.set(CACHE_KEY, events, 120);
-        
-        return res.status(200).json({ success: true, events });
+        return res.status(200).json({ success: true, events: eventsWithStats });
     } catch (error) {
         next(error);
     }
