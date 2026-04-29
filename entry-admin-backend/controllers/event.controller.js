@@ -16,7 +16,7 @@ export const createEvent = async (req, res, next) => {
         console.log(`[createEvent] Creating new event for host: ${req.user.id}`);
 
         const { 
-            title, description, date, startTime, endTime, coverImage, images, 
+            title, description, date, endDate, startTime, endTime, coverImage, images, 
             houseRules, attendeeCount, floorCount, tickets, status,
             locationVisibility, revealTime, allowNonTicketView, locationData,
             bookingOpenDate
@@ -28,6 +28,7 @@ export const createEvent = async (req, res, next) => {
             title,
             description,
             date: new Date(date),
+            endDate: endDate ? new Date(endDate) : undefined,
             startTime,
             endTime,
             coverImage,
@@ -154,7 +155,7 @@ export const getEvents = async (req, res, next) => {
         if (cached) return res.status(200).json({ success: true, events: cached });
 
         const events = await Event.find({ hostId })
-            .select('title date startTime coverImage status attendeeCount locationVisibility isLocationRevealed displayPrice revealTime bookingOpenDate')
+            .select('title date endDate startTime coverImage status attendeeCount locationVisibility isLocationRevealed displayPrice revealTime bookingOpenDate')
             .sort({ date: -1 }) // Sort newest first
             .lean();
         

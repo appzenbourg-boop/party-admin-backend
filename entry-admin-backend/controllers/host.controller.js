@@ -13,6 +13,7 @@ import { FoodOrder } from '../models/FoodOrder.js';
 import { IncidentReport } from '../models/IncidentReport.js';
 import { Review } from '../models/Review.js';
 import { Gift } from '../models/Gift.js';
+import { Event as EventModel } from '../models/Event.js';
 import { cacheService } from '../services/cache.service.js';
 
 // Cache TTL constants
@@ -392,11 +393,22 @@ export const getPayments = async (req, res, next) => {
 
 export const getPayouts = async (req, res, next) => {
     try {
-        const [payouts, earningsAgg] = await Promise.all([
+        const { default: mongoose } = await import('mongoose');
+        const hostObjId = new mongoose.Types.ObjectId(req.user.id);
+        
+        const [payouts, earningsAgg, bookingStats, orderStats] = await Promise.all([
             Payout.find({ hostId: req.user.id }).sort({ date: -1 }).lean(),
             Booking.aggregate([
-                { $match: { hostId: req.user.id, paymentStatus: 'paid' } },
+                { $match: { hostId: hostObjId, paymentStatus: 'paid' } },
                 { $group: { _id: null, totalEarnings: { $sum: "$pricePaid" } } }
+            ]),
+            Booking.aggregate([
+                { $match: { hostId: hostObjId, paymentStatus: 'paid' } },
+                { $group: { _id: "$eventId", total_tickets_sold: { $sum: 1 }, ticket_revenue: { $sum: "$pricePaid" } } }
+            ]),
+            FoodOrder.aggregate([
+                { $match: { hostId: hostObjId, paymentStatus: 'paid' } },
+                { $group: { _id: "$eventId", total_orders: { $sum: 1 }, order_revenue: { $sum: "$totalAmount" } } }
             ])
         ]);
 
@@ -408,6 +420,32 @@ export const getPayouts = async (req, res, next) => {
 
         const pendingPayouts = totalEarnings - completedPayouts;
 
+        const eventIds = [...new Set([
+            ...bookingStats.map(b => b._id ? b._id.toString() : 'null_event'),
+            ...orderStats.map(o => o._id ? o._id.toString() : 'null_event')
+        ])];
+
+        const validEventIds = eventIds.filter(id => id && id !== 'null_event');
+
+        const events = validEventIds.length > 0 ? await EventModel.find({ _id: { $in: validEventIds } }).select('title').lean() : [];
+        const eventMap = events.reduce((acc, ev) => { acc[ev._id] = ev.title; return acc; }, {});
+
+        const eventRevenue = eventIds.map(eventId => {
+            const bStat = bookingStats.find(b => (b._id ? b._id.toString() : 'null_event') === eventId) || { total_tickets_sold: 0, ticket_revenue: 0 };
+            const oStat = orderStats.find(o => (o._id ? o._id.toString() : 'null_event') === eventId) || { total_orders: 0, order_revenue: 0 };
+            return {
+                eventId,
+                event_name: eventId === 'null_event' ? 'General / No Event' : (eventMap[eventId] || 'Unknown Event'),
+                total_tickets_sold: bStat.total_tickets_sold,
+                total_orders: oStat.total_orders,
+                total_revenue: bStat.ticket_revenue + oStat.order_revenue,
+                ticket_revenue: bStat.ticket_revenue,
+                order_revenue: oStat.order_revenue
+            };
+        });
+
+        eventRevenue.sort((a, b) => b.total_revenue - a.total_revenue);
+
         res.status(200).json({
             success: true,
             data: {
@@ -415,7 +453,8 @@ export const getPayouts = async (req, res, next) => {
                 summary: {
                     totalEarnings,
                     pendingPayout: Math.max(0, pendingPayouts),
-                    completedPayout: completedPayouts
+                    completedPayout: completedPayouts,
+                    eventRevenue
                 }
             }
         });
