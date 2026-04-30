@@ -1,3 +1,4 @@
+import mongoose from 'mongoose';
 import { Event } from '../models/Event.js';
 import { Report } from '../models/Report.js';
 import { Booking } from '../models/booking.model.js';
@@ -10,6 +11,42 @@ import { getIO } from '../socket.js';
 import { User } from '../models/user.model.js';
 import { Host } from '../models/Host.js';
 import { bookEventSchema } from '../validators/user.validator.js';
+
+const checkIsEventExpired = (event) => {
+    if (!event || !event.date) return false;
+    try {
+        const now = new Date();
+        const baseDate = event.endDate ? new Date(event.endDate) : new Date(event.date);
+        
+        if (event.endTime) {
+            const match = event.endTime.match(/(\d+):(\d+)\s*(AM|PM)?/i);
+            if (match) {
+                let hours = parseInt(match[1], 10);
+                const minutes = parseInt(match[2], 10);
+                const modifier = match[3] ? match[3].toUpperCase() : null;
+                
+                if (modifier === 'PM' && hours < 12) hours += 12;
+                if (modifier === 'AM' && hours === 12) hours = 0;
+                
+                let endTimestamp = new Date(baseDate);
+                endTimestamp.setHours(hours, minutes, 0, 0);
+                
+                if (hours <= 6 && !event.endDate) {
+                    endTimestamp.setDate(endTimestamp.getDate() + 1);
+                }
+                
+                return now > endTimestamp;
+            }
+        }
+        
+        const endOfEvent = new Date(baseDate);
+        endOfEvent.setDate(endOfEvent.getDate() + 1);
+        endOfEvent.setHours(6, 0, 0, 0);
+        return now > endOfEvent;
+    } catch(e) {
+        return false;
+    }
+};
 
 export const createEvent = async (req, res, next) => {
     try {
@@ -86,6 +123,11 @@ export const getEventById = async (req, res, next) => {
         const item = await Event.findById(eventId).lean();
         if (!item) {
             return res.status(404).json({ success: false, message: 'Event not found' });
+        }
+
+        if (item.status === 'LIVE' && checkIsEventExpired(item)) {
+            item.status = 'EXPIRED';
+            Event.updateOne({ _id: item._id }, { status: 'EXPIRED' }).catch(() => {});
         }
 
         // Privacy Masking (Synchronized with user controller)
@@ -198,6 +240,14 @@ export const getEvents = async (req, res, next) => {
             cacheService.set(CACHE_KEY, [], 60).catch(() => {});
             return res.status(200).json({ success: true, events: [] });
         }
+
+        // Auto-expire check for host view
+        events.forEach(e => {
+            if (e.status === 'LIVE' && checkIsEventExpired(e)) {
+                e.status = 'EXPIRED';
+                Event.updateOne({ _id: e._id }, { status: 'EXPIRED' }).catch(() => {});
+            }
+        });
 
         // ── Real booking stats from Booking collection ─────────────────────
         // ticket.sold is never auto-updated — we aggregate from actual Booking docs
