@@ -74,33 +74,38 @@ export const getMyFoodOrders = async (req, res, next) => {
 
 export const getBookings = async (req, res, next) => {
     try {
-        const { eventId, status, search, page = 1, limit = 20 } = req.query;
-        let query = { hostId: req.user.id };
+        const { eventId, status, page = 1, limit = 20 } = req.query;
 
-        if (eventId) query.eventId = eventId;
-        if (status) query.status = status;
-        // Search by user name would require aggregation or populate matching. Simplified here:
+        // Input sanitisation
+        const pageNum  = Math.max(1, parseInt(page, 10)  || 1);
+        const limitNum = Math.min(50, Math.max(1, parseInt(limit, 10) || 20)); // cap at 50
+        const skip     = (pageNum - 1) * limitNum;
 
-        const skip = (page - 1) * limit;
+        const VALID_STATUSES = ['pending', 'approved', 'rejected', 'checked_in', 'cancelled', 'active'];
+        const query = { hostId: req.user.id };
+        if (eventId && mongoose.Types.ObjectId.isValid(eventId)) query.eventId = eventId;
+        if (status && VALID_STATUSES.includes(status)) query.status = status;
 
-        const bookings = await Booking.find(query)
-            .select('userId eventId ticketType tableId seatIds guests pricePaid checkInTime status paymentStatus createdAt')
-            .populate('userId', 'name email profileImage')
-            .populate('eventId', 'title date')
-            .skip(skip)
-            .limit(Number(limit))
-            .sort({ createdAt: -1 })
-            .lean();
+        // ⚡ Parallel: fetch bookings + count in one round-trip
+        const [bookings, total] = await Promise.all([
+            Booking.find(query)
+                .select('userId eventId ticketType tableId seatIds guests pricePaid checkInTime status paymentStatus bookingCode createdAt')
+                .populate('userId',  'name email profileImage')
+                .populate('eventId', 'title date coverImage startTime')
+                .sort({ createdAt: -1 })
+                .skip(skip)
+                .limit(limitNum)
+                .lean(),
+            Booking.countDocuments(query)
+        ]);
 
-        const total = await Booking.countDocuments(query);
-
-        res.status(200).json({
+        return res.status(200).json({
             success: true,
             data: bookings,
             pagination: {
                 total,
-                pages: Math.ceil(total / limit),
-                current: Number(page)
+                pages:   Math.ceil(total / limitNum),
+                current: pageNum
             }
         });
     } catch (error) {
@@ -177,26 +182,51 @@ export const checkInQR = async (req, res, next) => {
 export const updateBookingStatus = async (req, res, next) => {
     try {
         const { bookingId } = req.params;
-        const { status } = req.body; // 'approved' or 'rejected'
-        
+        const { status }    = req.body;
+
+        // Input validation
+        const ALLOWED = ['approved', 'rejected'];
+        if (!ALLOWED.includes(status)) {
+            return res.status(400).json({ success: false, message: `Invalid status. Must be one of: ${ALLOWED.join(', ')}` });
+        }
+        if (!mongoose.Types.ObjectId.isValid(bookingId)) {
+            return res.status(400).json({ success: false, message: 'Invalid booking ID' });
+        }
+
         const booking = await Booking.findOneAndUpdate(
             { _id: bookingId, hostId: req.user.id },
             { status },
-            { new: true }
+            { new: true, runValidators: true }
         );
 
-        if (booking) {
-            await cacheService.delete('admin_dashboard_stats');
-            const uId = booking.userId?._id || booking.userId;
-            await cacheService.delete(`my_bookings_${uId}`);
-            await cacheService.delete('events_all_guest_v11');
-        }
-
         if (!booking) {
-            return res.status(404).json({ success: false, message: 'Booking not found' });
+            return res.status(404).json({ success: false, message: 'Booking not found or unauthorised' });
         }
 
-        res.status(200).json({ success: true, data: booking });
+        const uId = booking.userId?.toString();
+
+        // ⚡ Cache invalidation — all in parallel
+        await Promise.all([
+            cacheService.delete('admin_dashboard_stats'),
+            cacheService.delete(`dashboard_stats_${req.user.id}`),
+            cacheService.delete(`my_bookings_${uId}`),
+            cacheService.delete('events_all_guest_v11')
+        ]);
+
+        // ── Push Notification to User (non-blocking) ───────────────────────────
+        if (uId) {
+            const isApproved = status === 'approved';
+            sendNotification(uId, {
+                title:   isApproved ? 'Booking Approved' : 'Booking Update',
+                message: isApproved
+                    ? 'Your booking has been approved by the host. See you at the event!'
+                    : 'Your booking request has been reviewed. Please check your bookings.',
+                type:    isApproved ? 'SUCCESS' : 'INFO',
+                data:    { bookingId: booking._id.toString(), status }
+            }).catch(e => console.error('[UpdateBookingStatus] Push Err:', e.message));
+        }
+
+        return res.status(200).json({ success: true, data: { _id: booking._id, status: booking.status } });
     } catch (error) {
         next(error);
     }

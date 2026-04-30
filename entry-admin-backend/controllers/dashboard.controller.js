@@ -8,61 +8,74 @@ export const getDashboardSummary = async (req, res, next) => {
 
     try {
         const CACHE_KEY = `dashboard_stats_${hostId}`;
-        const cached = await cacheService.get(CACHE_KEY);
-        if (cached && typeof cached !== 'string') return res.status(200).json({ success: true, ...cached });
-        if (cached && typeof cached === 'string') return res.status(200).json({ success: true, ...(JSON.parse(cached)) });
 
-        // ⚡ OPTIMIZED: Parallel queries with lean() for 3x faster performance
+        // ⚡ Serve from cache — handle both object and legacy string formats
+        const cached = await cacheService.get(CACHE_KEY);
+        if (cached) {
+            const payload = typeof cached === 'string' ? JSON.parse(cached) : cached;
+            return res.status(200).json({ success: true, ...payload });
+        }
+
+        const hostObjId = new mongoose.Types.ObjectId(hostId);
+
+        // ⚡ All 3 queries in parallel — no sequential waiting
         const [bookingStats, eventsStats, totalEvents] = await Promise.all([
+            // Real booking counts — excludes cancelled/rejected
             Booking.aggregate([
-                { $match: { hostId: new mongoose.Types.ObjectId(hostId), status: { $ne: 'cancelled' } } },
+                { $match: { hostId: hostObjId, status: { $nin: ['cancelled', 'rejected'] } } },
                 {
                     $group: {
-                        _id: null,
+                        _id:          null,
                         totalBookings: { $sum: 1 },
-                        revenue: { $sum: "$pricePaid" },
-                        checkedIn: { $sum: { $cond: [{ $eq: ["$status", "checked_in"] }, 1, 0] } }
+                        totalGuests:  { $sum: { $ifNull: ['$guests', 1] } },
+                        revenue:      { $sum: { $ifNull: ['$pricePaid', 0] } },
+                        checkedIn:    { $sum: { $cond: [{ $eq: ['$status', 'checked_in'] }, 1, 0] } }
                     }
                 }
-            ]),
-            
-            // Calculate capacity across events
+            ]).allowDiskUse(true),
+
+            // Total ticket capacity — inline array sum, no $unwind needed
             Event.aggregate([
-                { $match: { hostId: new mongoose.Types.ObjectId(hostId), status: { $ne: 'cancelled' } } },
-                { $unwind: "$tickets" },
+                { $match: { hostId: hostObjId, status: { $nin: ['cancelled', 'ENDED'] } } },
+                { $project: {
+                    attendeeCount:  1,
+                    ticketCapacity: { $sum: '$tickets.capacity' }
+                }},
                 { $group: {
                     _id: null,
-                    totalCapacity: { $sum: "$tickets.capacity" },
-                    totalSold: { $sum: "$tickets.sold" }
+                    totalCapacity:      { $sum: '$ticketCapacity' },
+                    totalAttendeeCount: { $sum: '$attendeeCount' }
                 }}
-            ]),
+            ]).allowDiskUse(true),
 
-            // ⚡ Count total events (faster than loading all)
+            // Count of all non-cancelled events
             Event.countDocuments({ hostId, status: { $ne: 'cancelled' } })
         ]);
 
-        const bStats = bookingStats[0] || { totalBookings: 0, revenue: 0, checkedIn: 0 };
-        const capacityData = eventsStats[0] || { totalCapacity: 0, totalSold: 0 };
-        const capacityUsage = capacityData.totalCapacity > 0
-            ? Math.round((capacityData.totalSold / capacityData.totalCapacity) * 100) + '%'
-            : '0%';
+        const b = bookingStats[0] ?? { totalBookings: 0, totalGuests: 0, revenue: 0, checkedIn: 0 };
+        const c = eventsStats[0]  ?? { totalCapacity: 0, totalAttendeeCount: 0 };
+
+        // Effective capacity: prefer configured ticket capacity, fallback to attendeeCount
+        const effectiveCapacity = c.totalCapacity > 0 ? c.totalCapacity : c.totalAttendeeCount;
+        const rawPct = effectiveCapacity > 0
+            ? Math.round((b.totalGuests / effectiveCapacity) * 100)
+            : 0;
+        const capacityUsage = Math.min(rawPct, 100) + '%'; // Cap at 100%
 
         const responsePayload = {
             stats: {
-                totalBookings: bStats.totalBookings,
-                totalEvents: totalEvents || 0,
-                revenue: bStats.revenue,
-                checkedIn: bStats.checkedIn,
+                totalBookings: b.totalBookings,
+                totalEvents:   totalEvents ?? 0,
+                revenue:       b.revenue,
+                checkedIn:     b.checkedIn,
                 capacityUsage
             }
         };
 
-        await cacheService.set(CACHE_KEY, responsePayload, 120); // 2 min cache for better performance
+        // Fire-and-forget cache write — don't block the response
+        cacheService.set(CACHE_KEY, responsePayload, 120).catch(() => {});
 
-        res.status(200).json({
-            success: true,
-            ...responsePayload
-        });
+        return res.status(200).json({ success: true, ...responsePayload });
     } catch (error) {
         next(error);
     }

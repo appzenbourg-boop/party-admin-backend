@@ -37,9 +37,11 @@ if (process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET) {
     passport.use(new GoogleStrategy({
         clientID:     process.env.GOOGLE_CLIENT_ID,
         clientSecret: process.env.GOOGLE_CLIENT_SECRET,
-        callbackURL:  process.env.GOOGLE_CALLBACK_URL || (process.env.NODE_ENV === 'production' 
-            ? 'https://test-53pw.onrender.com/api/auth/callback/google'
-            : 'http://localhost:3000/api/auth/callback/google'),
+
+
+        callbackURL:  process.env.GOOGLE_CALLBACK_URL || 'https://stayin.in/api2/auth/callback/google',
+        proxy: true,
+
         scope: ['profile', 'email'],
     }, async (accessToken, refreshToken, profile, done) => {
         try {
@@ -122,6 +124,11 @@ router.get('/google', (req, res, next) => {
         return res.status(503).json({ success: false, message: 'Google OAuth not configured' });
     }
     console.log('--- [BACKEND DEBUG] GET /api/auth/google hit ---');
+    console.log('[DEBUG /google] Original URL:', req.originalUrl);
+    console.log('[DEBUG /google] Host:', req.headers.host);
+    console.log('[DEBUG /google] Query params:', req.query);
+    console.log('[DEBUG /google] Configured Callback URL:', process.env.GOOGLE_CALLBACK_URL || 'https://stayin.in/api2/auth/callback/google');
+
     const redirectUri = req.query.redirectUri || 'entry-club://auth';
     const state = Buffer.from(JSON.stringify({ redirectUri })).toString('base64');
     passport.authenticate('google', { scope: ['profile', 'email'], session: false, state })(req, res, next);
@@ -131,20 +138,45 @@ router.get('/google', (req, res, next) => {
 router.get('/callback/google',
     (req, res, next) => {
         console.log('--- [BACKEND DEBUG] Callback hit from Google ---');
+        console.log('[DEBUG /callback/google] Original URL:', req.originalUrl);
+        console.log('[DEBUG /callback/google] Host:', req.headers.host);
+        console.log('[DEBUG /callback/google] Query params:', req.query);
+        
+        let redirectUri = 'entry-club://auth';
+        if (req.query.state) {
+            try {
+                const decoded = JSON.parse(Buffer.from(req.query.state, 'base64').toString('utf8'));
+                if (decoded.redirectUri) redirectUri = decoded.redirectUri;
+            } catch(e) {}
+        }
+
         // Handle failed authentication
         if (req.query.error) {
-            let redirectUri = 'entry-club://auth';
-            if (req.query.state) {
-                try {
-                    const decoded = JSON.parse(Buffer.from(req.query.state, 'base64').toString('utf8'));
-                    if (decoded.redirectUri) redirectUri = decoded.redirectUri;
-                } catch(e) {}
-            }
+            console.error('[Google Callback] Google returned error in query:', req.query.error);
             return res.redirect(`${redirectUri}?error=google_failed`);
         }
-        passport.authenticate('google', { session: false })(req, res, next);
+
+        passport.authenticate('google', { session: false }, (err, user, info) => {
+            if (err) {
+                console.error('============== [OAUTH FATAL ERROR] ==============');
+                console.error('[Google Callback] Auth Error Message:', err.message);
+                console.error('[Google Callback] Full Error Object:', err);
+                if (err.oauthError) {
+                    console.error('[Google Callback] OAuth specific error:', err.oauthError);
+                }
+                console.error('=================================================');
+                const errMsg = err.message || 'server_error';
+                return res.redirect(`${redirectUri}?error=${encodeURIComponent(errMsg)}`);
+            }
+            if (!user) {
+                console.error('[Google Callback] No user returned from strategy!');
+                return res.redirect(`${redirectUri}?error=no_user`);
+            }
+            req.user = user;
+            next();
+        })(req, res, next);
     },
-    (req, res) => {
+    async (req, res) => {
         try {
             console.log('--- [BACKEND DEBUG] Handling Final Callback ---');
             const user = req.user;
@@ -166,11 +198,27 @@ router.get('/callback/google',
             const token = jwt.sign(
                 { userId: user._id, role: user.role, hostId: user.hostId || null },
                 process.env.JWT_SECRET || 'supersecretkey123',
-                { expiresIn: '7d' }
+                { expiresIn: '30d' }
             );
+
+            const refreshToken = jwt.sign(
+                { userId: user._id },
+                process.env.JWT_REFRESH_SECRET || 'superrefreshsecret123',
+                { expiresIn: '90d' }
+            );
+
+            await user.constructor.updateOne(
+                { _id: user._id }, 
+                { $set: { refreshToken } }
+            );
+
+            // Clear cached profile data
+            const { cacheService } = await import('../services/cache.service.js');
+            await cacheService.delete(cacheService.formatKey('profile_v2', user._id.toString()));
 
             const params = new URLSearchParams({
                 token,
+                refreshToken,
                 role:                user.role || 'user',
                 name:                user.name || '',
                 email:               user.email || '',
@@ -178,6 +226,9 @@ router.get('/callback/google',
                 onboardingCompleted: 'true',   // ✅ Google users always skip onboarding
                 hostId:              user.hostId?.toString() || '',
                 username:            user.username || '',
+                phone:               user.phone || '',
+                gender:              user.gender || '',
+                userId:              user._id.toString(),
             });
 
             const deepLink = `${redirectUri}?${params.toString()}`;

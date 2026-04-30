@@ -87,6 +87,7 @@ export const getAnalyticsSummary = async (req, res, next) => {
             grossTicketRevenue: ticketRevenue,
             adminCommission,
             orderRevenue, // Required by APK frontend to render the pie chart split
+            adminCut: (ticketRevenue + orderRevenue) * 0.10,
             totalOrders: totalTicketsCount,
             totalTickets: totalTicketsCount,
             deliveredOrders: totalTicketsCount,

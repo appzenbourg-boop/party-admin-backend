@@ -113,7 +113,7 @@ export const getHostList = async (req, res, next) => {
 export const getHostProfile = async (req, res, next) => {
     try {
         const { id } = req.params;
-        const CACHE_KEY = `admin_host_prof_${id}`;
+        const CACHE_KEY = `admin_host_prof_v2_${id}`;
         
         let cached = await cacheService.get(CACHE_KEY);
         if (cached) return res.status(200).json({ success: true, data: cached, source: 'cache_hit' });
@@ -122,6 +122,26 @@ export const getHostProfile = async (req, res, next) => {
         const host = await Host.findById(id).select('-password -__v -kyc.documents').lean();
         if (!host) return res.status(404).json({ success: false, message: 'Host not found' });
         
+        // Calculate Revenue
+        const { default: mongoose } = await import('mongoose');
+        const hostObjId = new mongoose.Types.ObjectId(id);
+        
+        const [earningsAgg, orderAgg] = await Promise.all([
+            Booking.aggregate([
+                { $match: { hostId: hostObjId, paymentStatus: 'paid' } },
+                { $group: { _id: null, totalEarnings: { $sum: "$pricePaid" } } }
+            ]),
+            FoodOrder.aggregate([
+                { $match: { hostId: hostObjId, paymentStatus: 'paid' } },
+                { $group: { _id: null, totalEarnings: { $sum: "$totalAmount" } } }
+            ])
+        ]);
+
+        const ticketRevenue = earningsAgg[0] ? earningsAgg[0].totalEarnings : 0;
+        const foodRevenue = orderAgg[0] ? orderAgg[0].totalEarnings : 0;
+        host.totalRevenue = ticketRevenue + foodRevenue;
+        host.adminCut = host.totalRevenue * 0.10;
+
         await cacheService.set(CACHE_KEY, host, 120);
 
         res.status(200).json({ success: true, data: host });
