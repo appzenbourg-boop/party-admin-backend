@@ -39,7 +39,13 @@ export const getAnalyticsSummary = async (req, res, next) => {
         const [ticketsAgg, ordersAgg, staffCount, activeOrdersAgg] = await Promise.all([
             Booking.aggregate([
                 { $match: bookingMatch },
-                { $group: { _id: null, ticketRevenue: { $sum: '$pricePaid' }, totalTickets: { $sum: 1 } } }
+                { $group: { 
+                    _id: null, 
+                    ticketRevenue: { $sum: '$pricePaid' }, 
+                    adminCommission: { $sum: '$adminCommission' },
+                    hostEarnings: { $sum: '$hostEarnings' },
+                    totalTickets: { $sum: 1 } 
+                } }
             ]),
             FoodOrder.aggregate([
                 { $match: orderMatch },
@@ -70,13 +76,16 @@ export const getAnalyticsSummary = async (req, res, next) => {
         });
 
         const ticketRevenue = ticketsAgg[0]?.ticketRevenue || 0;
+        const adminCommission = ticketsAgg[0]?.adminCommission || 0;
+        const hostEarnings = ticketsAgg[0]?.hostEarnings || 0;
         const totalTicketsCount = ticketsAgg[0]?.totalTickets || 0;
         
         // ⚡ ADMIN: Only show ticket revenue and bookings (no food orders, staff, live orders)
         // ⚡ HOST: Show everything
         const responseData = isAdmin ? {
-            totalRevenue: ticketRevenue,
-            ticketRevenue,
+            totalRevenue: adminCommission, // Admin's actual revenue is the commission
+            grossTicketRevenue: ticketRevenue,
+            adminCommission,
             orderRevenue, // Required by APK frontend to render the pie chart split
             adminCut: (ticketRevenue + orderRevenue) * 0.10,
             totalOrders: totalTicketsCount,
@@ -85,8 +94,9 @@ export const getAnalyticsSummary = async (req, res, next) => {
             rejectedOrders: 0,
             updatedAt: new Date()
         } : {
-            totalRevenue: ticketRevenue + orderRevenue,
-            ticketRevenue,
+            totalRevenue: hostEarnings + orderRevenue, // Host's revenue is 90% + 100% of orders
+            grossTicketRevenue: ticketRevenue,
+            hostEarnings,
             orderRevenue,
             totalOrders: totalTicketsCount + totalOrders,
             totalTickets: totalTicketsCount,
@@ -144,7 +154,7 @@ export const getRevenueTrend = async (req, res, next) => {
                 { $match: matchQuery },
                 { $group: {
                     _id: { $dateToString: { format: "%Y-%m-%d", date: "$createdAt" } },
-                    dailyRevenue: { $sum: "$pricePaid" }
+                    dailyRevenue: { $sum: isAdmin ? "$adminCommission" : "$hostEarnings" }
                 }},
                 { $sort: { _id: 1 } }
             ])
@@ -284,7 +294,7 @@ export const getBookingTrend = async (req, res, next) => {
             { $group: {
                 _id: { $dateToString: { format: "%Y-%m-%d", date: "$createdAt" } },
                 count: { $sum: 1 },
-                revenue: { $sum: "$pricePaid" }
+                revenue: { $sum: isAdmin ? "$adminCommission" : "$hostEarnings" }
             }},
             { $sort: { _id: 1 } }
         ]);

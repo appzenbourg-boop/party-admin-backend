@@ -35,7 +35,9 @@ const hostSchema = new mongoose.Schema({
         country: { type: String, default: 'India' },
         address: { type: String, default: '' }
     },
-    refreshToken: { type: String, default: null } // often needed for auth
+    refreshToken: { type: String, default: null }, // often needed for auth
+    // 💰 COMMISSION: Admin sets % of each booking that goes to admin (default 10%)
+    commissionRate: { type: Number, default: 10, min: 0, max: 100 }
 }, { timestamps: true });
 
 // Pre-save hook to hash password if modified

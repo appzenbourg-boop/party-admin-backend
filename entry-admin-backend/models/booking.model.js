@@ -17,6 +17,9 @@ const bookingSchema = new mongoose.Schema({
     qrPayload: { type: String, sparse: true },
     checkInTime: { type: Date },
 
+    adminCommission: { type: Number, default: 0 },
+    hostEarnings: { type: Number, default: 0 },
+
     status: { type: String, enum: ['pending', 'approved', 'rejected', 'active', 'checked_in', 'cancelled', 'invalid'], default: 'pending' },
     paymentStatus: { type: String, enum: ['pending', 'paid'], default: 'pending' }
 }, { timestamps: true });

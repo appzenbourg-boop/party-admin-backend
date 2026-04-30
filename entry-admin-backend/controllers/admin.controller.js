@@ -772,3 +772,41 @@ export const deleteStaff = async (req, res, next) => {
         next(error);
     }
 };
+
+// ── UPDATE HOST COMMISSION RATE ──────────────────────────────────────────────
+export const updateHostCommission = async (req, res, next) => {
+    try {
+        const { id } = req.params;
+        const { commissionRate } = req.body;
+
+        if (commissionRate === undefined || commissionRate < 0 || commissionRate > 100) {
+            return res.status(400).json({ 
+                success: false, 
+                message: 'Invalid commission rate. Must be between 0 and 100.' 
+            });
+        }
+
+        const host = await Host.findByIdAndUpdate(
+            id,
+            { $set: { commissionRate } },
+            { new: true, lean: true }
+        ).select('name commissionRate');
+
+        if (!host) return res.status(404).json({ success: false, message: 'Host not found' });
+
+        // Invalidate cache (Shared Redis ensures cross-backend clearance)
+        await cacheService.delete(`admin_host_prof_${id}`);
+        await cacheService.delete(`host_profile_${id}`);
+        await cacheService.delete(`hostProfile_${id}`);
+        await cacheService.delete(`profile_v2:${id}`);
+
+        res.status(200).json({
+            success: true,
+            message: `Commission rate for ${host.name} updated to ${commissionRate}%`,
+            data: host
+        });
+    } catch (error) {
+        next(error);
+    }
+};
+
