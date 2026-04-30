@@ -1,3 +1,4 @@
+import mongoose from 'mongoose';
 import { Event } from '../models/Event.js';
 import { Report } from '../models/Report.js';
 import { Booking } from '../models/booking.model.js';
