@@ -77,7 +77,8 @@ export const protect = async (req, res, next) => {
 };
 
 export const requireAdmin = (req, res, next) => {
-    if (req.user && (req.user.role?.toUpperCase() === 'ADMIN' || req.user.role?.toUpperCase() === 'SUPERADMIN')) {
+    const role = (req.user && req.user.role) ? req.user.role.toUpperCase() : null;
+    if (role === 'ADMIN' || role === 'SUPERADMIN') {
         next();
     } else {
         res.status(403).json({ success: false, message: 'Not authorized as an admin' });
@@ -85,7 +86,7 @@ export const requireAdmin = (req, res, next) => {
 };
 
 export const requireHost = (req, res, next) => {
-    const role = req.user?.role?.toUpperCase();
+    const role = (req.user && req.user.role) ? req.user.role.toUpperCase() : null;
     if (role === 'HOST' || role === 'ADMIN' || role === 'SUPERADMIN') {
         next();
     } else {
@@ -94,7 +95,7 @@ export const requireHost = (req, res, next) => {
 };
 
 export const requireStaff = (req, res, next) => {
-    const role = req.user?.role?.toUpperCase();
+    const role = (req.user && req.user.role) ? req.user.role.toUpperCase() : null;
     if (role === 'STAFF' || role === 'ADMIN' || role === 'SUPERADMIN' || role === 'HOST') {
         next();
     } else {
