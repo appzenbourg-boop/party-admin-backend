@@ -183,7 +183,7 @@ export const sendOtp = async (req, res, next) => {
                 return res.status(200).json({ 
                     success: true, 
                     message: 'OTP sent successfully', 
-                    data: { type: 'phone', hint: fallbackOtp }
+                    data: { type: 'phone' }
                 });
             }
         }
