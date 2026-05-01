@@ -31,6 +31,7 @@ import staffRoutes    from './entry-admin-backend/routes/staff.routes.js';
 import waiterRoutes   from './entry-admin-backend/routes/waiter.routes.js';
 import securityRoutes from './entry-admin-backend/routes/security.routes.js';
 import chatRoutes     from './entry-admin-backend/routes/chat.routes.js';
+import adminWalletRoutes from './entry-admin-backend/routes/admin.wallet.routes.js';
 import { errorHandler, notFoundHandler } from './entry-admin-backend/middleware/error.js';
 
 // ── App Setup ─────────────────────────────────────────────────────────────────
@@ -130,6 +131,7 @@ app.use('/api/v1/staff',     staffRoutes);
 app.use('/api/v1/waiter',    waiterRoutes);
 app.use('/api/v1/security',  securityRoutes);
 app.use('/api/chat',         chatRoutes);  // 🆕 Production Chat System
+app.use('/api/v1/admin/wallet', adminWalletRoutes);
 
 // ⚡ 404 Handler - Must be after all routes
 app.use(notFoundHandler);

@@ -37,7 +37,21 @@ const hostSchema = new mongoose.Schema({
     },
     refreshToken: { type: String, default: null }, // often needed for auth
     // 💰 COMMISSION: Admin sets % of each booking that goes to admin (default 10%)
-    commissionRate: { type: Number, default: 10, min: 0, max: 100 }
+    commissionRate: { type: Number, default: 10, min: 0, max: 100 },
+    // 💳 WALLET (NEW)
+    wallet: {
+        balance: { type: Number, default: 0 },       // Current withdrawable amount
+        totalEarned: { type: Number, default: 0 },   // Lifetime earnings
+        pendingWithdrawal: { type: Number, default: 0 } // Amount currently in "Pending" status
+    },
+    // 🏦 BANK DETAILS (FOR PAYOUTS)
+    bankDetails: {
+        accountNumber: { type: String, default: '' },
+        ifscCode: { type: String, default: '' },
+        accountHolderName: { type: String, default: '' },
+        upiId: { type: String, default: '' },
+        bankName: { type: String, default: '' }
+    }
 }, { timestamps: true });
 
 // Pre-save hook to hash password if modified
