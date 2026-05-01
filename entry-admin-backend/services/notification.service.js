@@ -26,7 +26,7 @@ const cleanupStaleTokens = async (responses, tokens) => {
     const staleTokens = [];
     responses.forEach((res, idx) => {
         if (!res.success) {
-            const code = res.error?.code;
+            const code = (res.error && res.error.code) ? res.error.code : null;
             if (
                 code === 'messaging/registration-token-not-registered' ||
                 code === 'messaging/invalid-registration-token' ||
@@ -94,7 +94,7 @@ export const notificationService = {
 
             return response;
         } catch (error) {
-            console.error('[Push Error] sendToUser:', error?.message || error);
+            console.error('[Push Error] sendToUser:', (error && error.message) ? error.message : error);
         }
     },
 
@@ -135,7 +135,7 @@ export const notificationService = {
                 await cleanupStaleTokens(response.responses, batch);
             }
         } catch (error) {
-            console.error('[Push Error] sendToRole:', error?.message || error);
+            console.error('[Push Error] sendToRole:', (error && error.message) ? error.message : error);
         }
     },
 
@@ -168,7 +168,7 @@ export const notificationService = {
             await cleanupStaleTokens(response.responses, fcmTokens);
             return response;
         } catch (error) {
-            console.error('[Push Error] sendBulk:', error?.message || error);
+            console.error('[Push Error] sendBulk:', (error && error.message) ? error.message : error);
         }
     },
 };
@@ -207,11 +207,11 @@ export const sendNotification = async (userId, titleOrOptions, body, type = 'sys
 
         // 2. Push delivery (non-blocking — don't throw if push fails)
         notificationService.sendToUser(userId, title, message, { ...finalData, type: finalType }).catch(err => {
-            console.error('[Push] Delivery failed (non-fatal):', err?.message);
+            console.error('[Push] Delivery failed (non-fatal):', (err && err.message) ? err.message : 'Unknown error');
         });
 
         return dbNotification;
     } catch (error) {
-        console.error('[NotificationService] sendNotification failed:', error?.message || error);
+        console.error('[NotificationService] sendNotification failed:', (error && error.message) ? error.message : error);
     }
 };
