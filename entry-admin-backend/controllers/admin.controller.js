@@ -826,7 +826,8 @@ export const getPendingPayouts = async (req, res, next) => {
         const { id } = req.params;
         const payout = await Payout.findById(id);
         if (!payout) return res.status(404).json({ success: false, message: 'Payout request not found' });
-        if (payout.status !== 'Pending') return res.status(400).json({ success: false, message: `Payout is already ${payout.status}` });
+        const pStatus = payout.status;
+        if (pStatus !== 'Pending') return res.status(400).json({ success: false, message: 'Payout is already ' + pStatus });
         const host = await Host.findById(payout.hostId);
         if (!host) return res.status(404).json({ success: false, message: 'Host not found' });
         host.withdrawnAmount += payout.amount;
@@ -856,7 +857,8 @@ export const rejectPayout = async (req, res, next) => {
         payout.status = 'Failed';
         await payout.save();
 
-        await cacheService.delete(`analytics_summary_${payout.hostId}`);
+        const hId = payout.hostId;
+        await cacheService.delete('analytics_summary_' + hId);
 
         res.status(200).json({ success: true, message: 'Payout request rejected and funds refunded.', data: payout });
     } catch (error) { next(error); }
