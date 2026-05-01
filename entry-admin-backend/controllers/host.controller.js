@@ -1324,7 +1324,7 @@ export const updateBankDetails = async (req, res, next) => {
                 });
 
                 const rzpAccount = await razorpay.accounts.create({
-                    email: updatedHost.email || `host_${hostId}@entryclub.com`,
+                    email: updatedHost.email || ('host_' + hostId + '@entryclub.com'),
                     type: 'route',
                     contact_name: accountHolderName || updatedHost.name,
                     profile: {
@@ -1348,13 +1348,14 @@ export const updateBankDetails = async (req, res, next) => {
                     }
                 });
 
-                if (rzpAccount?.id) {
+                if (rzpAccount && rzpAccount.id) {
                     updatedHost.razorpayAccountId = rzpAccount.id;
                     await updatedHost.save();
-                    console.log(`[SYS] Razorpay Linked Account created for Host ${hostId}: ${rzpAccount.id}`);
+                    console.log('[SYS] Razorpay Linked Account created for Host ' + hostId + ': ' + rzpAccount.id);
                 }
             } catch (rzpErr) {
-                console.error('[SYS ERR] Auto-Razorpay Onboarding Failed:', rzpErr.error?.description || rzpErr.message);
+                const rzpMsg = (rzpErr.error && rzpErr.error.description) || rzpErr.message;
+                console.error('[SYS ERR] Auto-Razorpay Onboarding Failed:', rzpMsg);
                 // We don't block the response; Admin can manually link later if API fails
             }
         }
