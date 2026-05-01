@@ -1410,6 +1410,19 @@ export const requestWithdrawal = async (req, res, next) => {
         await cacheService.delete(`analytics_summary_${hostId}`);
         await cacheService.delete(`analytics_trend_${hostId}`);
 
+        // 🔔 NOTIFY ADMIN (Background)
+        (async () => {
+            try {
+                const { notificationService } = await import('../services/notification.service.js');
+                await notificationService.sendToRole(
+                    'admin', 
+                    'New Withdrawal Request 💰', 
+                    `Host ${updatedHost.name || 'Partner'} requested ₹${withdrawAmount}.`, 
+                    { type: 'payout', id: payout._id.toString() }
+                );
+            } catch (e) { console.error('[Payout Notification Error]', e.message); }
+        })();
+
         res.status(200).json({ 
             success: true, 
             message: 'Withdrawal request sent to Admin. Balance has been locked.',
