@@ -810,3 +810,63 @@ export const updateHostCommission = async (req, res, next) => {
     }
 };
 
+// ── PAYOUT MANAGEMENT (Admin) ────────────────────────────────────────────────
+export const getPendingPayouts = async (req, res, next) => {
+    try {
+        const payouts = await Payout.find({ status: 'Pending' })
+            .populate('hostId', 'name email phone bankDetails')
+            .sort({ createdAt: -1 })
+            .lean();
+
+        res.status(200).json({ success: true, data: payouts });
+    } catch (error) { next(error); }
+};
+
+export const approvePayout = async (req, res, next) => {
+    try {
+        const { id } = req.params;
+        const payout = await Payout.findById(id);
+
+        if (!payout) return res.status(404).json({ success: false, message: 'Payout request not found' });
+        if (payout.status !== 'Pending') return res.status(400).json({ success: false, message: `Payout is already ${payout.status}` });
+
+        const host = await Host.findById(payout.hostId);
+        if (!host) return res.status(404).json({ success: false, message: 'Host not found' });
+
+        if (host.currentBalance < payout.amount) {
+            return res.status(400).json({ success: false, message: 'Host has insufficient balance now' });
+        }
+
+        // 💰 EXECUTE ACCOUNTING SPLIT: Deduct balance upon approval
+        host.currentBalance -= payout.amount;
+        host.withdrawnAmount += payout.amount;
+        await host.save();
+
+        payout.status = 'Success';
+        payout.date = new Date();
+        await payout.save();
+
+        // ⚡ BUST CACHE
+        await cacheService.delete(`analytics_summary_${host._id}`);
+        await cacheService.delete('analytics_summary_admin_all');
+        await cacheService.delete(`analytics_trend_${host._id}`);
+        await cacheService.delete('analytics_trend_admin_all');
+
+        res.status(200).json({ success: true, message: 'Payout approved. Host balance updated.', data: payout });
+    } catch (error) { next(error); }
+};
+
+export const rejectPayout = async (req, res, next) => {
+    try {
+        const { id } = req.params;
+        const payout = await Payout.findById(id);
+
+        if (!payout) return res.status(404).json({ success: false, message: 'Payout request not found' });
+        if (payout.status !== 'Pending') return res.status(400).json({ success: false, message: `Payout is already ${payout.status}` });
+
+        payout.status = 'Failed';
+        await payout.save();
+
+        res.status(200).json({ success: true, message: 'Payout request rejected.', data: payout });
+    } catch (error) { next(error); }
+};
