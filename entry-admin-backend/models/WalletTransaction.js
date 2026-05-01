@@ -12,4 +12,4 @@ const walletTransactionSchema = new mongoose.Schema({
 
 walletTransactionSchema.index({ hostId: 1, createdAt: -1 });
 
-export const WalletTransaction = mongoose.model('WalletTransaction', walletTransactionSchema);
+export const WalletTransaction = mongoose.models.WalletTransaction || mongoose.model('WalletTransaction', walletTransactionSchema);

@@ -19,4 +19,4 @@ const withdrawalRequestSchema = new mongoose.Schema({
 withdrawalRequestSchema.index({ hostId: 1, status: 1 });
 withdrawalRequestSchema.index({ createdAt: -1 });
 
-export const WithdrawalRequest = mongoose.model('WithdrawalRequest', withdrawalRequestSchema);
+export const WithdrawalRequest = mongoose.models.WithdrawalRequest || mongoose.model('WithdrawalRequest', withdrawalRequestSchema);
