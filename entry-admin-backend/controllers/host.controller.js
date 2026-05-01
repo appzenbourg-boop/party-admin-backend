@@ -1095,3 +1095,343 @@ export const submitIncidentReport = async (req, res, next) => {
     }
 };
 
+// --- WITHDRAWAL & BANK DETAILS ---
+
+export const updateBankDetails = async (req, res, next) => {
+    try {
+        const { accountHolderName, accountNumber, ifsc, bankName } = req.body;
+        const hostId = req.user.id;
+
+        const updatedHost = await Host.findByIdAndUpdate(
+            hostId,
+            {
+        res.status(200).json({ success: true, data: orders });
+    } catch (error) {
+        next(error);
+    }
+};
+
+export const updateOrderStatus = async (req, res, next) => {
+    try {
+        const { orderId } = req.params;
+        const { status } = req.body;
+
+        const validStatuses = ['confirmed', 'accepted', 'preparing', 'out_for_delivery', 'completed', 'cancelled'];
+        if (!validStatuses.includes(status)) {
+            return res.status(400).json({ success: false, message: 'Invalid order status' });
+        }
+
+        const order = await FoodOrder.findByIdAndUpdate(
+            orderId,
+            { status },
+            { new: true }
+        );
+
+        if (!order) {
+            return res.status(404).json({ success: false, message: 'Order not found' });
+        }
+
+        res.status(200).json({ success: true, data: order, message: `Order status updated to ${status}` });
+    } catch (error) {
+        next(error);
+    }
+};
+
+// ─── GIFTS (Standalone DB – fast indexed lookups) ────────────────────────────
+export const getHostGifts = async (req, res, next) => {
+    try {
+        const gifts = await Gift.findForHost(req.user.id);
+        res.status(200).json({ success: true, data: gifts });
+    } catch (error) {
+        next(error);
+    }
+};
+
+export const createHostGift = async (req, res, next) => {
+    try {
+        const { name, description, price, category, image, inStock } = req.body;
+        if (!name || price === undefined || !category) {
+            return res.status(400).json({ success: false, message: 'name, price, and category are required' });
+        }
+
+        // --- STAGE 1: IMMEDIATE PERSISTENCE (Sub-50ms) ---
+        // Create the gift record with a temporary image or placeholder
+        const gift = await Gift.create({
+            hostId: req.user.id,
+            name,
+            description,
+            price: Number(price),
+            category,
+            image: (image && image.startsWith('http')) ? image : '', // Placeholder if it's base64/file
+            inStock: inStock !== false
+        });
+
+        // --- STAGE 2: INSTANT RESPONSE ---
+        res.status(201).json({ 
+            success: true, 
+            data: gift, 
+            message: 'Gift added successfully. Processing media in background...' 
+        });
+
+        // --- STAGE 3: BACKGROUND ASYNC ASSET ORCHESTRATION ---
+        if (image && (image.startsWith('data:') || image.startsWith('file:'))) {
+            (async () => {
+                try {
+                    const finalUrl = await uploadToCloudinary(image, 'host-gifts');
+                    await Gift.findByIdAndUpdate(gift._id, { image: finalUrl });
+                    console.log(`[SYS] Background Gift Image processed: ${gift._id}`);
+                } catch (e) {
+                    console.error(`[SYS ERR] Background Gift Image failed: ${gift._id}`, e.message);
+                }
+            })();
+        }
+    } catch (error) {
+        next(error);
+    }
+};
+
+export const updateHostGift = async (req, res, next) => {
+    try {
+        const { giftId } = req.params;
+        const { name, description, price, category, image, inStock } = req.body;
+        const gift = await Gift.findOneAndUpdate(
+            { _id: giftId, hostId: req.user.id },   // ownership check
+            { name, description, price: price !== undefined ? Number(price) : undefined, category, image, inStock },
+            { new: true, runValidators: true }
+        );
+        if (!gift) return res.status(404).json({ success: false, message: 'Gift not found' });
+        res.status(200).json({ success: true, data: gift });
+    } catch (error) {
+        next(error);
+    }
+};
+
+export const removeHostGift = async (req, res, next) => {
+    try {
+        const { giftId } = req.params;
+        // Soft-delete — preserves audit trail, never destroys data
+        const deleted = await Gift.softDelete(giftId, req.user.id);
+        if (!deleted) return res.status(404).json({ success: false, message: 'Gift not found' });
+        res.status(200).json({ success: true, message: 'Gift removed' });
+    } catch (error) {
+        next(error);
+    }
+};
+
+// --- GUEST INTERACTION: INCIDENT REPORTING ---
+export const submitIncidentReport = async (req, res, next) => {
+    try {
+        const { title, category, description, location, images, isAnonymous, venueId } = req.body;
+        
+        // ⚡ ASYNC ORCHESTRATION: Parallelize Cloudinary & DB Lookup
+        const [uploadedUrls, resolvedVenueId] = await Promise.all([
+            (async () => {
+                if (!images || images.length === 0) return [];
+                try {
+                    const { uploadToCloudinary } = await import('../config/cloudinary.config.js');
+                    return await Promise.all(images.map(img => uploadToCloudinary(img, 'entry-club/incidents')));
+                } catch (ce) { console.error('[Cloudinary] Incident Upload Fail:', ce.message); return []; }
+            })(),
+            (async () => {
+                if (venueId) return venueId;
+                // Auto-resolve: Find where the user is currently checked-in
+                const booking = await Booking.findOne({ 
+                    userId: req.user.id, 
+                    status: { $in: ['active', 'checked_in', 'approved'] } 
+                }).select('hostId').lean();
+                if (!booking) return null;
+                const v = await Venue.findOne({ hostId: booking.hostId }).select('_id').lean();
+                return v?._id;
+            })()
+        ]);
+
+        const report = await IncidentReport.create({
+            userId: req.user.id,
+            venueId: resolvedVenueId,
+            title,
+            category,
+            description,
+            location: location || 'Venue Area',
+            images: uploadedUrls,
+            isAnonymous: isAnonymous || false,
+            status: 'pending'
+        });
+
+        // Background Side-Effects (Non-blocking Sync)
+        (async () => {
+             const { getIO } = await import('../socket.js');
+             const io = getIO();
+             if (io) {
+                const populated = await IncidentReport.findById(report._id).populate('userId', 'name profileImage').lean();
+                if (report.isAnonymous && populated.userId) populated.userId = null;
+                
+                if (resolvedVenueId) io.to(resolvedVenueId.toString()).emit('new_incident', populated);
+                io.emit('new_incident', populated); 
+            }
+
+            if (category === 'Technical Bug') {
+                const devUser = await User.findOne({ username: 'devanshjais20' }).select('_id').lean();
+                if (devUser) {
+                    const { notificationService } = await import('../services/notification.service.js');
+                    notificationService.sendToUser(
+                        devUser._id,
+                        'Critical: Technical Bug Reported',
+                        `New bug: "${title}"`,
+                        { type: 'incident', id: report._id.toString() }
+                    ).catch(() => {});
+                }
+            }
+        })().catch(e => console.error('[Incident Background Tasks Fail]', e.message));
+
+        res.status(201).json({ success: true, message: 'Incident reported successfully.', data: report });
+    } catch (err) {
+        next(err);
+    }
+};
+
+// --- WITHDRAWAL & BANK DETAILS ---
+
+export const updateBankDetails = async (req, res, next) => {
+    try {
+        const { accountHolderName, accountNumber, ifsc, bankName } = req.body;
+        const hostId = req.user.id;
+
+        // 1. Update DB first
+        const updatedHost = await Host.findByIdAndUpdate(
+            hostId,
+            {
+                $set: {
+                    'bankDetails.accountHolderName': accountHolderName,
+                    'bankDetails.accountNumber': accountNumber,
+                    'bankDetails.ifsc': ifsc,
+                    'bankDetails.bankName': bankName,
+                    'bankDetails.isVerified': true 
+                }
+            },
+            { new: true }
+        );
+
+        if (!updatedHost) return res.status(404).json({ success: false, message: 'Host not found' });
+
+        // 2. 🤖 AUTOMATIC RAZORPAY ONBOARDING (Route)
+        // If they don't have an ID yet, create one on Razorpay
+        if (!updatedHost.razorpayAccountId) {
+            try {
+                const { default: Razorpay } = await import('razorpay');
+                const razorpay = new Razorpay({
+                    key_id: process.env.RAZORPAY_KEY_ID,
+                    key_secret: process.env.RAZORPAY_KEY_SECRET,
+                });
+
+                const rzpAccount = await razorpay.accounts.create({
+                    email: updatedHost.email || `host_${hostId}@entryclub.com`,
+                    type: 'route',
+                    contact_name: accountHolderName || updatedHost.name,
+                    profile: {
+                        category: 'entertainment',
+                        subcategory: 'event_planning',
+                        addresses: {
+                            registered: {
+                                street1: 'Venue Address',
+                                city: 'Venue City',
+                                state: 'DL',
+                                postal_code: '110001',
+                                country: 'IN'
+                            }
+                        }
+                    },
+                    legal_entity_type: 'individual',
+                    bank_account: {
+                        account_number: accountNumber,
+                        ifsc_code: ifsc,
+                        beneficiary_name: accountHolderName
+                    }
+                });
+
+                if (rzpAccount?.id) {
+                    updatedHost.razorpayAccountId = rzpAccount.id;
+                    await updatedHost.save();
+                    console.log(`[SYS] Razorpay Linked Account created for Host ${hostId}: ${rzpAccount.id}`);
+                }
+            } catch (rzpErr) {
+                console.error('[SYS ERR] Auto-Razorpay Onboarding Failed:', rzpErr.error?.description || rzpErr.message);
+                // We don't block the response; Admin can manually link later if API fails
+            }
+        }
+
+        res.status(200).json({ 
+            success: true, 
+            message: 'Bank details updated. Automatic split enabled.',
+            data: updatedHost.bankDetails 
+        });
+    } catch (error) { next(error); }
+};
+
+export const requestWithdrawal = async (req, res, next) => {
+    try {
+        const hostId = req.user.id;
+        const { amount } = req.body;
+
+        const withdrawAmount = Number(amount);
+        if (!withdrawAmount || withdrawAmount < 500) {
+            return res.status(400).json({ success: false, message: 'Minimum withdrawal amount is ₹500' });
+        }
+
+        // 🛡️ ATOMIC OPERATION: Check balance and deduct in ONE step
+        const updatedHost = await Host.findOneAndUpdate(
+            { _id: hostId, currentBalance: { $gte: withdrawAmount } },
+            { $inc: { currentBalance: -withdrawAmount } },
+            { new: true }
+        );
+
+        if (!updatedHost) {
+            return res.status(400).json({ 
+                success: false, 
+                message: 'Insufficient balance or withdrawal limit reached.' 
+            });
+        }
+
+        if (!updatedHost.bankDetails?.accountNumber || !updatedHost.bankDetails?.ifsc) {
+            // 🔄 REFUND: Put money back if they forgot bank details
+            await Host.findByIdAndUpdate(hostId, { $inc: { currentBalance: withdrawAmount } });
+            return res.status(400).json({ success: false, message: 'Please add your bank details first' });
+        }
+
+        // Create Payout Record (Request)
+        const payout = await Payout.create({
+            hostId,
+            amount: withdrawAmount,
+            status: 'Pending',
+            transactionId: `REQ_${Date.now()}`,
+            date: new Date()
+        });
+
+        // ⚡ ZERO-LATENCY CACHE CLEAR
+        await cacheService.delete(`analytics_summary_${hostId}`);
+        await cacheService.delete(`analytics_trend_${hostId}`);
+
+        // 🔔 NOTIFY ADMIN (Background)
+        (async () => {
+            try {
+                const { notificationService } = await import('../services/notification.service.js');
+                await notificationService.sendToRole(
+                    'admin', 
+                    'New Withdrawal Request 💰', 
+                    `Host ${updatedHost.name || 'Partner'} requested ₹${withdrawAmount}.`, 
+                    { type: 'payout', id: payout._id.toString() }
+                );
+            } catch (e) { console.error('[Payout Notification Error]', e.message); }
+        })();
+
+        res.status(200).json({ 
+            success: true, 
+            message: 'Withdrawal request sent to Admin. Balance has been locked.',
+            data: {
+                requestedAmount: withdrawAmount,
+                newBalance: updatedHost.currentBalance,
+                payoutId: payout._id
+            }
+        });
+
+    } catch (error) { next(error); }
+};

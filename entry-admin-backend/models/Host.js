@@ -37,7 +37,24 @@ const hostSchema = new mongoose.Schema({
     },
     refreshToken: { type: String, default: null }, // often needed for auth
     // 💰 COMMISSION: Admin sets % of each booking that goes to admin (default 10%)
-    commissionRate: { type: Number, default: 10, min: 0, max: 100 }
+    commissionRate: { type: Number, default: 10, min: 0, max: 100 },
+
+    // 🔗 RAZORPAY ROUTE (NEW: For Automatic Splits)
+    razorpayAccountId: { type: String, default: '' }, // e.g., acc_HjK92jL...
+
+    // 🏦 BANK DETAILS (Keep for records)
+    bankDetails: {
+        accountHolderName: { type: String, default: '' },
+        accountNumber:     { type: String, default: '' },
+        ifsc:              { type: String, default: '' },
+        bankName:          { type: String, default: '' },
+        isVerified:        { type: Boolean, default: false }
+    },
+
+    // 💵 WALLET (NEW: For Tracking Earnings)
+    totalEarnings:   { type: Number, default: 0 }, // Lifetime earnings
+    withdrawnAmount: { type: Number, default: 0 }, // Total money already paid out
+    currentBalance:  { type: Number, default: 0 }  // Money available to withdraw right now
 }, { timestamps: true });
 
 // Pre-save hook to hash password if modified

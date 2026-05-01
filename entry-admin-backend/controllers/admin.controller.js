@@ -810,3 +810,54 @@ export const updateHostCommission = async (req, res, next) => {
     }
 };
 
+// ── PAYOUT MANAGEMENT (Admin) ────────────────────────────────────────────────
+export const getPendingPayouts = async (req, res, next) => {
+    try {
+        const payouts = await Payout.find({ status: 'Pending' })
+            .populate('hostId', 'name email phone bankDetails')
+            .sort({ createdAt: -1 })
+            .lean();
+
+        res.status(200).json({ success: true, data: payouts });
+    } catch (error) { next(error); }
+};
+export const approvePayout = async (req, res, next) => {
+    try {
+        const { id } = req.params;
+        const payout = await Payout.findById(id);
+        if (!payout) return res.status(404).json({ success: false, message: 'Payout request not found' });
+        if (payout.status !== 'Pending') return res.status(400).json({ success: false, message: `Payout is already ${payout.status}` });
+        const host = await Host.findById(payout.hostId);
+        if (!host) return res.status(404).json({ success: false, message: 'Host not found' });
+        host.withdrawnAmount += payout.amount;
+        await host.save();
+        payout.status = 'Success';
+        payout.date = new Date();
+        await payout.save();
+        await cacheService.delete(`analytics_summary_${host._id}`);
+        await cacheService.delete('analytics_summary_admin_all');
+        await cacheService.delete(`analytics_trend_${host._id}`);
+        await cacheService.delete('analytics_trend_admin_all');
+        res.status(200).json({ success: true, message: 'Payout approved.', data: payout });
+    } catch (error) { next(error); }
+};
+
+export const rejectPayout = async (req, res, next) => {
+    try {
+        const { id } = req.params;
+        const payout = await Payout.findById(id);
+
+        if (!payout) return res.status(404).json({ success: false, message: 'Payout request not found' });
+        if (payout.status !== 'Pending') return res.status(400).json({ success: false, message: `Payout is already ${payout.status}` });
+
+        // 🔄 ATOMIC REFUND: Return locked funds to host
+        await Host.findByIdAndUpdate(payout.hostId, { $inc: { currentBalance: payout.amount } });
+
+        payout.status = 'Failed';
+        await payout.save();
+
+        await cacheService.delete(`analytics_summary_${payout.hostId}`);
+
+        res.status(200).json({ success: true, message: 'Payout request rejected and funds refunded.', data: payout });
+    } catch (error) { next(error); }
+};
