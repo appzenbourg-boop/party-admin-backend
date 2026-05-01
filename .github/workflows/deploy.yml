@@ -17,8 +17,8 @@ jobs:
         uses: appleboy/ssh-action@master
         with:
           host: ${{ secrets.AWS_HOST }}
-          username: ${{ secrets.AWS_USERNAME }}
-          key: ${{ secrets.AWS_SSH_KEY }}
+          username: ubuntu
+          key: ${{ secrets.AWS_PRIVATE_KEY }}
           port: 22
           script: |
             # Try both possible paths just in case
