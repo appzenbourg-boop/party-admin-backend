@@ -2,7 +2,7 @@ name: AWS Admin Deployment
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, featurebranch ]
 
 jobs:
   deploy:
@@ -17,12 +17,21 @@ jobs:
         uses: appleboy/ssh-action@master
         with:
           host: ${{ secrets.AWS_HOST }}
-          username: ${{ secrets.AWS_USERNAME }}
-          key: ${{ secrets.AWS_SSH_KEY }}
+          username: ubuntu
+          key: ${{ secrets.AWS_PRIVATE_KEY }}
           port: 22
           script: |
-            cd /home/ubuntu/party-admin-backend
-            git pull origin main
+            # Try both possible paths just in case
+            if [ -d "/home/ubuntu/party-admin-backend" ]; then
+              cd /home/ubuntu/party-admin-backend
+            elif [ -d "/home/ubuntu/party/party-admin-backend" ]; then
+              cd /home/ubuntu/party/party-admin-backend
+            else
+              echo "❌ Error: Could not find project directory!"
+              exit 1
+            fi
+            
+            git pull origin main || git pull origin featurebranch
             npm install --production
-            pm2 restart admin-backend
+            pm2 restart admin-backend || pm2 start server.js --name admin-backend
             echo "🚀 Admin Backend Deployment successful!"
