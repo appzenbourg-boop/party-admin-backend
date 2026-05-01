@@ -1,33 +1,28 @@
-name: CD (Continuous Deployment)
+name: AWS Admin Deployment
 
 on:
   push:
-    branches: [ featurebranch, main ]
+    branches: [ main ]
 
 jobs:
   deploy:
+    name: Deploy to AWS Admin
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v3
 
-      - name: Deploy to AWS EC2
+      - name: Deploy to Server via SSH
         uses: appleboy/ssh-action@master
         with:
           host: ${{ secrets.AWS_HOST }}
-          username: ubuntu
-          key: ${{ secrets.AWS_PRIVATE_KEY }}
+          username: ${{ secrets.AWS_USERNAME }}
+          key: ${{ secrets.AWS_SSH_KEY }}
+          port: 22
           script: |
-            # 1. Navigate to the project directory
-            cd /home/ubuntu/party-admin-backend || exit
-            
-            # 2. Pull the latest changes
-            git pull origin featurebranch
-            
-            # 3. Install dependencies
-            npm install
-            
-            # 4. Restart the application using PM2
-            pm2 restart "admin-backend" || pm2 start index.js --name "admin-backend"
-            
-            echo "🚀 Admin Backend Deployment Successful!"
+            cd /home/ubuntu/party-admin-backend
+            git pull origin main
+            npm install --production
+            pm2 restart admin-backend
+            echo "🚀 Admin Backend Deployment successful!"
