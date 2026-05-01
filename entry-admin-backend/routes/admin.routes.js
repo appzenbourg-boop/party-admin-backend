@@ -23,10 +23,7 @@ import {
     toggleHostRegistryStatus,
     deleteUser,
     getAdminProfile,
-    updateHostCommission,
-    getPendingPayouts,
-    approvePayout,
-    rejectPayout
+    updateHostCommission
 } from '../controllers/admin.controller.js';
 
 const router = express.Router();
@@ -55,9 +52,6 @@ router.get('/users/:id', getUserProfile);
 router.put('/users/:id/status', toggleUserStatus);
 router.delete('/users/:id', deleteUser);
 router.get('/bookings', getBookingList);
-router.get('/payouts/pending', getPendingPayouts);
-router.post('/payouts/:id/approve', approvePayout);
-router.post('/payouts/:id/reject', rejectPayout);
 router.get('/stats', getAdminStats);
 router.post('/cache/clear', async (req, res) => {
     try {
