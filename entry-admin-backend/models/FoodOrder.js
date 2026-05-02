@@ -25,7 +25,7 @@ const foodOrderSchema = new mongoose.Schema({
     status: { type: String, enum: ['payment_pending', 'confirmed', 'accepted', 'preparing', 'out_for_delivery', 'completed', 'cancelled'], default: 'payment_pending' },
     paymentStatus: { type: String, enum: ['pending', 'paid', 'failed'], default: 'pending' },
     transactionId: { type: String },
-    assignedStaffId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+    assignedStaffId: { type: mongoose.Schema.Types.ObjectId, ref: 'Staff', default: null },
     acceptedAt: { type: Date },
     completedAt: { type: Date }
 }, { timestamps: true });

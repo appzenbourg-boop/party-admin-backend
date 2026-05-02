@@ -11,6 +11,7 @@ import { getIO } from '../socket.js';
 import { User } from '../models/user.model.js';
 import { Host } from '../models/Host.js';
 import { bookEventSchema } from '../validators/user.validator.js';
+import { uploadToCloudinary } from '../config/cloudinary.config.js';
 
 const checkIsEventExpired = (event) => {
     if (!event || !event.date) return false;
@@ -59,6 +60,16 @@ export const createEvent = async (req, res, next) => {
             bookingOpenDate
         } = req.body;
 
+        const uploadTask = async (data, folder) => {
+            if (data && data.startsWith('data:')) {
+                return await uploadToCloudinary(data, folder);
+            }
+            return data;
+        };
+
+        const finalCoverImage = await uploadTask(coverImage, 'event-covers');
+        const finalImages = await Promise.all((images || []).map(img => uploadTask(img, 'event-gallery')));
+
         const event = new Event({
             hostId: req.user.id,
             hostModel: req.user.role?.toUpperCase() === 'HOST' ? 'Host' : 'User',
@@ -68,8 +79,8 @@ export const createEvent = async (req, res, next) => {
             endDate: endDate ? new Date(endDate) : undefined,
             startTime,
             endTime,
-            coverImage,
-            images,
+            coverImage: finalCoverImage,
+            images: finalImages,
             houseRules,
             attendeeCount: attendeeCount || 0,
             floorCount: floorCount || 1,
@@ -110,7 +121,22 @@ export const createEvent = async (req, res, next) => {
 export const updateEvent = async (req, res, next) => {
     try {
         const { eventId } = req.params;
-        const updated = await Event.findByIdAndUpdate(eventId, req.body, { new: true });
+        const uploadTask = async (data, folder) => {
+            if (data && data.startsWith('data:')) {
+                return await uploadToCloudinary(data, folder);
+            }
+            return data;
+        };
+
+        const updateData = { ...req.body };
+        if (updateData.coverImage) {
+            updateData.coverImage = await uploadTask(updateData.coverImage, 'event-covers');
+        }
+        if (updateData.images && Array.isArray(updateData.images)) {
+            updateData.images = await Promise.all(updateData.images.map(img => uploadTask(img, 'event-gallery')));
+        }
+
+        const updated = await Event.findByIdAndUpdate(eventId, updateData, { new: true });
         return res.status(200).json({ success: true, eventId: updated._id });
     } catch (error) {
         next(error);

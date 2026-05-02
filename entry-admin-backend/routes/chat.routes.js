@@ -8,6 +8,7 @@ import {
     sendMessage,
     markRead,
     searchUsers,
+    deleteMessage,
 } from '../controllers/chat.controller.js';
 import {
     validate,
@@ -77,6 +78,13 @@ router.post(
     generalLimiter,
     validate(markReadSchema),
     markRead
+);
+
+/** DELETE /api/chat/messages/:messageId — unsend a message */
+router.delete(
+    '/messages/:messageId',
+    generalLimiter,
+    deleteMessage
 );
 
 // ── User search ───────────────────────────────────────────────────────────────

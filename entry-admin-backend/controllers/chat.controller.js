@@ -186,3 +186,37 @@ export const searchUsers = async (req, res) => {
         return err(res, 'Internal server error');
     }
 };
+
+// ─── DELETE /api/chat/messages/:messageId ────────────────────────────────────
+export const deleteMessage = async (req, res) => {
+    try {
+        const senderId = req.user.userId || req.user.id;
+        const { messageId } = req.params;
+
+        const { Message } = await import('../models/Message.js');
+        const message = await Message.findOne({ _id: messageId, senderId });
+
+        if (!message) {
+            return err(res, 'Message not found or unauthorized', 404);
+        }
+
+        message.isDeleted = true;
+        message.text = "This message was deleted";
+        await message.save();
+
+        try {
+            const io = getIO();
+            io.to(`conv_${message.conversationId}`).emit('message:deleted', {
+                messageId: message._id,
+                conversationId: message.conversationId
+            });
+        } catch (socketErr) {
+            logger.warn('[Chat] Socket deleted emit failed:', socketErr.message);
+        }
+
+        return ok(res, { deleted: true });
+    } catch (e) {
+        logger.error('[Chat] deleteMessage:', e.message);
+        return err(res, 'Internal server error');
+    }
+};
