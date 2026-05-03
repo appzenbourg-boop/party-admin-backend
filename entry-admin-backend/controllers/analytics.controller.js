@@ -122,12 +122,12 @@ export const getRevenueTrend = async (req, res, next) => {
             return res.status(200).json({ success: true, data: cachedData, source: 'cache' });
         }
 
-        // Last 60 days only — enough for a trend graph, much faster than Jan 1
+        // Current month: 1st to today
         const today = new Date();
         today.setHours(23, 59, 59, 999);
-        const since = new Date();
-        since.setDate(since.getDate() - 59);
+        const since = new Date(today.getFullYear(), today.getMonth(), 1); // 1st of current month
         since.setHours(0, 0, 0, 0);
+        const daysInRange = today.getDate(); // How many days so far this month
 
         const hostFilter = isAdmin ? {} : { hostId: req.user.id };
 
@@ -162,9 +162,9 @@ export const getRevenueTrend = async (req, res, next) => {
             map.set(_id, (map.get(_id) || 0) + rev);
         }
 
-        // Fill all dates in range (so graph has no gaps)
+        // Fill all days of current month so far
         const data = [];
-        for (let i = 0; i < 60; i++) {
+        for (let i = 0; i < daysInRange; i++) {
             const d = new Date(since);
             d.setDate(since.getDate() + i);
             const key = d.toISOString().split('T')[0];
