@@ -5,10 +5,12 @@ import { Staff } from '../models/Staff.js';
 import { Booking } from '../models/booking.model.js';
 import { FoodOrder } from '../models/FoodOrder.js';
 import { Admin } from '../models/admin.model.js';
+import { PayoutRequest } from '../models/PayoutRequest.js';
 import { cacheService } from '../services/cache.service.js';
 import { sendNotification } from '../services/notification.service.js';
 import { uploadToCloudinary } from '../config/cloudinary.config.js';
 import { getIO } from '../socket.js';
+
 
 // ── CREATE HOST ─────────────────────────────────────────────────────────────
 export const createHost = async (req, res, next) => {
@@ -768,6 +770,76 @@ export const deleteStaff = async (req, res, next) => {
         if (!staff) return res.status(404).json({ success: false, message: 'Personnel not found' });
 
         res.status(200).json({ success: true, message: 'Personnel permanently removed from registry' });
+    } catch (error) {
+        next(error);
+    }
+};
+
+// ── PAYOUT REQUESTS (Admin) ─────────────────────────────────────────────────
+
+// GET /admin/payout-requests — list all payout requests
+export const getPayoutRequests = async (req, res, next) => {
+    try {
+        const status = req.query.status || 'PENDING'; // PENDING | COMPLETED | REJECTED | ALL
+        const query = status === 'ALL' ? {} : { status };
+
+        const requests = await PayoutRequest.find(query)
+            .populate('hostId', 'name email phone profileImage bankDetails')
+            .populate('processedBy', 'name')
+            .sort({ createdAt: -1 })
+            .lean();
+
+        res.status(200).json({ success: true, data: requests });
+    } catch (error) {
+        next(error);
+    }
+};
+
+// POST /admin/payout-requests/:id/process — mark as COMPLETED or REJECTED
+export const processPayoutRequest = async (req, res, next) => {
+    try {
+        const { id } = req.params;
+        const { status, transactionId, note } = req.body; // status: COMPLETED | REJECTED
+
+        if (!['COMPLETED', 'REJECTED'].includes(status)) {
+            return res.status(400).json({ success: false, message: 'Status must be COMPLETED or REJECTED' });
+        }
+
+        const payoutReq = await PayoutRequest.findById(id).populate('hostId', 'name _id');
+        if (!payoutReq) return res.status(404).json({ success: false, message: 'Payout request not found' });
+
+        payoutReq.status = status;
+        payoutReq.transactionId = transactionId || '';
+        payoutReq.note = note || '';
+        payoutReq.processedAt = new Date();
+        payoutReq.processedBy = req.user.id;
+        await payoutReq.save();
+
+        // If completed, also create a Payout record for the host's history
+        if (status === 'COMPLETED') {
+            const { Payout } = await import('../models/Payout.js');
+            await Payout.create({
+                hostId: payoutReq.hostId._id,
+                amount: payoutReq.amount,
+                status: 'Success',
+                date: new Date()
+            });
+
+            // Notify host
+            await sendNotification(payoutReq.hostId._id, {
+                title: '💸 Payout Received!',
+                message: `Your payout of ₹${payoutReq.amount.toLocaleString()} has been transferred successfully.`,
+                type: 'SYSTEM'
+            });
+        } else {
+            await sendNotification(payoutReq.hostId._id, {
+                title: 'Payout Request Update',
+                message: `Your payout request of ₹${payoutReq.amount.toLocaleString()} was not processed. Reason: ${note || 'Contact admin for details'}`,
+                type: 'SYSTEM'
+            });
+        }
+
+        res.status(200).json({ success: true, message: `Payout request marked as ${status}`, data: payoutReq });
     } catch (error) {
         next(error);
     }

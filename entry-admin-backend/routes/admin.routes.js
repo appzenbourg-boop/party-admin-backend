@@ -22,8 +22,11 @@ import {
     deleteHost,
     toggleHostRegistryStatus,
     deleteUser,
-    getAdminProfile
+    getAdminProfile,
+    getPayoutRequests,
+    processPayoutRequest,
 } from '../controllers/admin.controller.js';
+
 
 const router = express.Router();
 
@@ -51,6 +54,8 @@ router.put('/users/:id/status', toggleUserStatus);
 router.delete('/users/:id', deleteUser);
 router.get('/bookings', getBookingList);
 router.get('/stats', getAdminStats);
+router.get('/payout-requests', getPayoutRequests);
+router.post('/payout-requests/:id/process', processPayoutRequest);
 router.post('/cache/clear', async (req, res) => {
     try {
         await cacheService.flushAll();
