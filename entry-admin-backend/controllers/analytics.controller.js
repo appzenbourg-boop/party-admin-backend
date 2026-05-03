@@ -2,6 +2,7 @@ import { Booking } from '../models/booking.model.js';
 import { FoodOrder } from '../models/FoodOrder.js';
 import { Staff } from '../models/Staff.js';
 import { cacheService } from '../services/cache.service.js';
+import { User } from '../models/user.model.js';
 
 // GET /analytics/summary
 export const getAnalyticsSummary = async (req, res, next) => {
@@ -20,7 +21,7 @@ export const getAnalyticsSummary = async (req, res, next) => {
 
         // ⚡ ADMIN: No hostId filter, HOST: Filter by hostId
         const bookingMatch = isAdmin 
-            ? { paymentStatus: 'paid', status: { $in: ['approved', 'active', 'checked_in', 'completed'] } }
+            ? { paymentStatus: 'paid' }
             : { hostId: hostId, paymentStatus: 'paid', status: { $in: ['approved', 'active', 'checked_in', 'completed'] } };
         
         const orderMatch = isAdmin
@@ -71,14 +72,14 @@ export const getAnalyticsSummary = async (req, res, next) => {
 
         const ticketRevenue = ticketsAgg[0]?.ticketRevenue || 0;
         const totalTicketsCount = ticketsAgg[0]?.totalTickets || 0;
+        const grossRevenue = ticketRevenue + orderRevenue;
         
-        // ⚡ ADMIN: Only show ticket revenue and bookings (no food orders, staff, live orders)
-        // ⚡ HOST: Show everything
+        // ADMIN: Show platform-wide totals — gross revenue, per-stream breakdown, platform cut
         const responseData = isAdmin ? {
-            totalRevenue: ticketRevenue,
-            ticketRevenue,
-            orderRevenue, // Required by APK frontend to render the pie chart split
-            adminCut: (ticketRevenue + orderRevenue) * 0.10,
+            totalRevenue: grossRevenue,          // Gross: tickets + food
+            ticketRevenue,                       // Ticket stream
+            orderRevenue,                        // Food stream
+            adminCut: grossRevenue * 0.10,       // 10% platform fee
             totalOrders: totalTicketsCount,
             totalTickets: totalTicketsCount,
             deliveredOrders: totalTicketsCount,
@@ -234,7 +235,6 @@ export const getTopUsers = async (req, res, next) => {
             .map(([uId, spent]) => ({ id: uId, spent }));
 
         // POPULATE users efficiently in one query
-        const { User } = await import('../models/user.model.js');
         const userInfos = await User.find({ _id: { $in: sortedIds.map(s => s.id) } })
             .select('name profileImage email')
             .lean();
