@@ -113,59 +113,70 @@ export const getRevenueTrend = async (req, res, next) => {
     try {
         const userRole = req.user?.role?.toUpperCase();
         const isAdmin = userRole === 'ADMIN' || userRole === 'SUPERADMIN';
-        
-        // ⚡ ADMIN: Show ALL revenue, HOST: Show only their revenue
+
         const CACHE_KEY = isAdmin ? 'analytics_trend_admin_all' : `analytics_trend_${req.user.id}`;
-        
-        let cachedData = await cacheService.get(CACHE_KEY);
+
+        // ⚡ Serve from cache instantly (30 min TTL)
+        const cachedData = await cacheService.get(CACHE_KEY);
         if (cachedData) {
             return res.status(200).json({ success: true, data: cachedData, source: 'cache' });
         }
 
-        // Get data from April 1st of current year
+        // Last 60 days only — enough for a trend graph, much faster than Jan 1
         const today = new Date();
-        const aprilFirst = new Date(today.getFullYear(), 3, 1); // April 1st (month is 0-indexed)
-        aprilFirst.setHours(0, 0, 0, 0);
+        today.setHours(23, 59, 59, 999);
+        const since = new Date();
+        since.setDate(since.getDate() - 59);
+        since.setHours(0, 0, 0, 0);
 
-        // ⚡ ADMIN: No hostId filter, HOST: Filter by hostId
-        const matchQuery = isAdmin 
-            ? { paymentStatus: 'paid', createdAt: { $gte: aprilFirst } }
-            : { hostId: req.user.id, paymentStatus: 'paid', createdAt: { $gte: aprilFirst } };
+        const hostFilter = isAdmin ? {} : { hostId: req.user.id };
 
-        const [ordersAgg, bookingsAgg] = await Promise.all([
-            FoodOrder.aggregate([
-                { $match: matchQuery },
-                { $group: {
-                    _id: { $dateToString: { format: "%Y-%m-%d", date: "$createdAt" } },
-                    dailyRevenue: { $sum: "$totalAmount" }
-                }},
-                { $sort: { _id: 1 } }
-            ]),
+        const baseMatch = {
+            ...hostFilter,
+            paymentStatus: 'paid',
+            createdAt: { $gte: since, $lte: today }
+        };
+
+        const groupByDate = {
+            $dateToString: { format: '%Y-%m-%d', date: '$createdAt', timezone: '+05:30' }
+        };
+
+        // ⚡ Single round-trip: both collections in parallel with index hints
+        const [bookingsAgg, ordersAgg] = await Promise.all([
             Booking.aggregate([
-                { $match: matchQuery },
-                { $group: {
-                    _id: { $dateToString: { format: "%Y-%m-%d", date: "$createdAt" } },
-                    dailyRevenue: { $sum: "$pricePaid" }
-                }},
+                { $match: baseMatch },
+                { $group: { _id: groupByDate, rev: { $sum: '$pricePaid' } } },
                 { $sort: { _id: 1 } }
-            ])
+            ]).hint({ paymentStatus: 1 }),
+
+            FoodOrder.aggregate([
+                { $match: baseMatch },
+                { $group: { _id: groupByDate, rev: { $sum: '$totalAmount' } } },
+                { $sort: { _id: 1 } }
+            ]).hint({ status: 1, paymentStatus: 1 })
         ]);
 
-        const trendsMap = new Map();
-        [...ordersAgg, ...bookingsAgg].forEach(item => {
-            const current = trendsMap.get(item._id) || 0;
-            trendsMap.set(item._id, current + item.dailyRevenue);
-        });
+        // Merge both into a single date map
+        const map = new Map();
+        for (const { _id, rev } of [...bookingsAgg, ...ordersAgg]) {
+            map.set(_id, (map.get(_id) || 0) + rev);
+        }
 
-        const data = Array.from(trendsMap.entries())
-            .map(([date, revenue]) => ({ date, revenue }))
-            .sort((a, b) => a.date.localeCompare(b.date));
+        // Fill all dates in range (so graph has no gaps)
+        const data = [];
+        for (let i = 0; i < 60; i++) {
+            const d = new Date(since);
+            d.setDate(since.getDate() + i);
+            const key = d.toISOString().split('T')[0];
+            data.push({ date: key, revenue: map.get(key) || 0 });
+        }
 
-        await cacheService.set(CACHE_KEY, data, 600); // 10 minutes cache
+        await cacheService.set(CACHE_KEY, data, 1800); // 30 min cache
 
         res.status(200).json({ success: true, data });
-    } catch(err) { next(err); }
+    } catch (err) { next(err); }
 };
+
 
 // GET /analytics/top-items
 export const getTopItems = async (req, res, next) => {
