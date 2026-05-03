@@ -68,19 +68,24 @@ class HighPerformanceCache {
     async set(key, value, ttl = 300) {
         try {
             if (this.isUpstashEnabled) {
-                await this.client.set(key, value, { ex: ttl });
+                // Fire and forget for sets to prevent blocking API responses
+                this.client.set(key, value, { ex: ttl }).catch(e => console.error('[Cache Set Error]', e.message));
             } else {
                 this.localStore.set(key, { value, exp: Date.now() + (ttl * 1000) });
             }
         } catch (err) {
-            console.error('[Cache Set Error]', err);
+            console.error('[Cache Set Error]', err.message);
         }
     }
 
     async get(key) {
         try {
             if (this.isUpstashEnabled) {
-                return await this.client.get(key);
+                // Short timeout for cache - 100ms
+                return await Promise.race([
+                    this.client.get(key),
+                    new Promise(resolve => setTimeout(() => resolve(null), 100))
+                ]);
             } else {
                 const item = this.localStore.get(key);
                 if (!item) return null;
@@ -91,7 +96,7 @@ class HighPerformanceCache {
                 return item.value;
             }
         } catch (err) {
-            console.error('[Cache Get Error]', err);
+            console.error('[Cache Get Error]', err.message);
             return null;
         }
     }
@@ -99,12 +104,13 @@ class HighPerformanceCache {
     async delete(key) {
         try {
             if (this.isUpstashEnabled) {
-                await this.client.del(key);
+                // Fire and forget for deletes
+                this.client.del(key).catch(e => console.error('[Cache Delete Error]', e.message));
             } else {
                 this.localStore.delete(key);
             }
         } catch (err) {
-            console.error('[Cache Delete Error]', err);
+            console.error('[Cache Delete Error]', err.message);
         }
     }
 

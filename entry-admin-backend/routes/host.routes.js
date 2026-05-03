@@ -50,7 +50,11 @@ import {
     getMenuItems,
     addMenuItem,
     updateMenuItem,
-    removeMenuItem
+    removeMenuItem,
+    updateBankDetails,
+    getBankDetails,
+    submitPayoutRequest,
+    getMyPayoutRequests,
 } from '../controllers/host.controller.js';
 import {
     getAdminChat,
@@ -85,6 +89,10 @@ router.put('/profile/venue', validate(updateVenueSchema), updateVenueProfile);
 // --- PAYMENTS & PAYOUTS ---
 router.get('/payments', getPayments);
 router.get('/payouts', getPayouts);
+router.get('/bank-details', getBankDetails);
+router.put('/bank-details', updateBankDetails);
+router.post('/payout-requests', submitPayoutRequest);
+router.get('/payout-requests', getMyPayoutRequests);
 
 // --- STAFF ---
 router.get('/staff', getStaff);

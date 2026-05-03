@@ -10,5 +10,6 @@ const mediaSchema = new mongoose.Schema({
     fileSize: { type: Number },
     mimeType: { type: String }
 }, { timestamps: true });
+mediaSchema.index({ hostId: 1, createdAt: -1 });
 
 export const Media = mongoose.model('Media', mediaSchema);

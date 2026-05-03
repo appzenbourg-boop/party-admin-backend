@@ -35,7 +35,15 @@ const hostSchema = new mongoose.Schema({
         country: { type: String, default: 'India' },
         address: { type: String, default: '' }
     },
-    refreshToken: { type: String, default: null } // often needed for auth
+    refreshToken: { type: String, default: null }, // often needed for auth
+    // 💳 BANK/UPI DETAILS for payouts
+    bankDetails: {
+        name: { type: String, default: '' },
+        upiId: { type: String, default: '' },
+        accountNumber: { type: String, default: '' },
+        bankName: { type: String, default: '' },
+        ifsc: { type: String, default: '' },
+    }
 }, { timestamps: true });
 
 // Pre-save hook to hash password if modified
