@@ -3,6 +3,7 @@ import { WaiterDetails } from '../models/WaiterDetails.js';
 import { Staff } from '../models/Staff.js';
 import { getIO } from '../socket.js';
 import { cacheService } from '../services/cache.service.js';
+import Notification from '../models/Notification.js';
 
 /**
  * Helper: fetch the waiter's zone/type details.

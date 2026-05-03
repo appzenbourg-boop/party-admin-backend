@@ -1,3 +1,5 @@
+import mongoose from 'mongoose';
+import bcrypt from 'bcryptjs';
 import { User } from '../models/user.model.js';
 import { Host } from '../models/Host.js';
 import { Venue } from '../models/Venue.js';
@@ -393,7 +395,6 @@ export const getPayments = async (req, res, next) => {
 
 export const getPayouts = async (req, res, next) => {
     try {
-        const { default: mongoose } = await import('mongoose');
         const hostObjId = new mongoose.Types.ObjectId(req.user.id);
         
         const [payouts, earningsAgg, bookingStats, orderStats] = await Promise.all([
@@ -475,8 +476,12 @@ export const getStaff = async (req, res, next) => {
             .select('-password -refreshToken')
             .sort({ createdAt: -1 })
             .lean();
+            
         const data = staff.map(s => ({ ...s, fullName: s.name }));
-        await cacheService.set(CACHE_KEY, data, TTL.list);
+        
+        // Fire and forget cache set
+        cacheService.set(CACHE_KEY, data, TTL.list).catch(() => {});
+        
         res.status(200).json({ success: true, data });
     } catch (error) { next(error); }
 };
@@ -522,8 +527,9 @@ export const addStaff = async (req, res, next) => {
         };
 
         const staff = await Staff.create(staffData);
-        // Bust staff cache
-        await cacheService.delete(ckey('staff', req.user.id));
+        // Fire and forget cache invalidation
+        cacheService.delete(ckey('staff', req.user.id)).catch(() => {});
+        
         const { password: _, refreshToken: __, name: staffName, ...safeStaff } = staff.toObject();
         res.status(201).json({ success: true, data: { ...safeStaff, fullName: staffName }, message: `${staffType} added successfully` });
     } catch (error) { next(error); }
@@ -558,8 +564,7 @@ export const updateStaff = async (req, res, next) => {
 
         // Re-hash password if changed
         if (password) {
-            const bcrypt = await import('bcryptjs');
-            updateData.password = await bcrypt.default.hash(password, 10);
+            updateData.password = await bcrypt.hash(password, 10);
         }
 
         const staff = await Staff.findOneAndUpdate(
@@ -705,7 +710,12 @@ export const getReviews = async (req, res, next) => {
 // --- MEDIA MANAGEMENT ---
 export const getMedia = async (req, res, next) => {
     try {
+        const CACHE_KEY = ckey('media', req.user.id);
+        const cached = await cacheService.get(CACHE_KEY);
+        if (cached) return res.status(200).json({ success: true, data: cached });
+
         const media = await Media.find({ hostId: req.user.id }).sort({ createdAt: -1 }).lean();
+        cacheService.set(CACHE_KEY, media, TTL.list).catch(() => {});
         res.status(200).json({ success: true, data: media });
     } catch (error) {
         next(error);
@@ -725,6 +735,8 @@ export const uploadMedia = async (req, res, next) => {
             fileSize,
             mimeType
         });
+        
+        cacheService.delete(ckey('media', req.user.id)).catch(() => {});
         res.status(201).json({ success: true, data: media, message: 'Media uploaded successfully' });
     } catch (error) {
         next(error);
@@ -735,6 +747,7 @@ export const removeMedia = async (req, res, next) => {
     try {
         const { mediaId } = req.params;
         await Media.findOneAndDelete({ _id: mediaId, hostId: req.user.id });
+        cacheService.delete(ckey('media', req.user.id)).catch(() => {});
         res.status(200).json({ success: true, message: 'Media removed successfully' });
     } catch (error) {
         next(error);
@@ -1095,3 +1108,62 @@ export const submitIncidentReport = async (req, res, next) => {
     }
 };
 
+// --- BANK / UPI DETAILS ---
+export const updateBankDetails = async (req, res, next) => {
+    try {
+        const { name, upiId, accountNumber, bankName, ifsc } = req.body;
+        const hostId = req.user.id;
+
+        const host = await Host.findByIdAndUpdate(
+            hostId,
+            { $set: { bankDetails: { name, upiId, accountNumber, bankName, ifsc } } },
+            { new: true }
+        ).select('bankDetails').lean();
+
+        if (!host) return res.status(404).json({ success: false, message: 'Host not found' });
+
+        res.status(200).json({ success: true, message: 'Bank details updated', data: host.bankDetails });
+    } catch (error) { next(error); }
+};
+
+export const getBankDetails = async (req, res, next) => {
+    try {
+        const host = await Host.findById(req.user.id).select('bankDetails').lean();
+        if (!host) return res.status(404).json({ success: false, message: 'Host not found' });
+        res.status(200).json({ success: true, data: host.bankDetails || {} });
+    } catch (error) { next(error); }
+};
+
+// --- PAYOUT REQUEST SUBMISSION (Host → Admin) ---
+export const submitPayoutRequest = async (req, res, next) => {
+    try {
+        const { PayoutRequest } = await import('../models/PayoutRequest.js');
+        const hostId = req.user.id;
+        const { amount } = req.body;
+
+        if (!amount || amount <= 0) {
+            return res.status(400).json({ success: false, message: 'Invalid payout amount' });
+        }
+
+        const host = await Host.findById(hostId).select('name bankDetails').lean();
+        if (!host) return res.status(404).json({ success: false, message: 'Host not found' });
+
+        // Snapshot bank details at time of request
+        const request = await PayoutRequest.create({
+            hostId,
+            amount,
+            bankDetails: host.bankDetails || {},
+            status: 'PENDING',
+        });
+
+        res.status(201).json({ success: true, message: 'Payout request submitted!', data: request });
+    } catch (error) { next(error); }
+};
+
+export const getMyPayoutRequests = async (req, res, next) => {
+    try {
+        const { PayoutRequest } = await import('../models/PayoutRequest.js');
+        const requests = await PayoutRequest.find({ hostId: req.user.id }).sort({ createdAt: -1 }).lean();
+        res.status(200).json({ success: true, data: requests });
+    } catch (error) { next(error); }
+};

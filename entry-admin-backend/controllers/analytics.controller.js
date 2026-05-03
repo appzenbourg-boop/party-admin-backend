@@ -2,6 +2,7 @@ import { Booking } from '../models/booking.model.js';
 import { FoodOrder } from '../models/FoodOrder.js';
 import { Staff } from '../models/Staff.js';
 import { cacheService } from '../services/cache.service.js';
+import { User } from '../models/user.model.js';
 
 // GET /analytics/summary
 export const getAnalyticsSummary = async (req, res, next) => {
@@ -20,7 +21,7 @@ export const getAnalyticsSummary = async (req, res, next) => {
 
         // ⚡ ADMIN: No hostId filter, HOST: Filter by hostId
         const bookingMatch = isAdmin 
-            ? { paymentStatus: 'paid', status: { $in: ['approved', 'active', 'checked_in', 'completed'] } }
+            ? { paymentStatus: 'paid' }
             : { hostId: hostId, paymentStatus: 'paid', status: { $in: ['approved', 'active', 'checked_in', 'completed'] } };
         
         const orderMatch = isAdmin
@@ -39,13 +40,7 @@ export const getAnalyticsSummary = async (req, res, next) => {
         const [ticketsAgg, ordersAgg, staffCount, activeOrdersAgg] = await Promise.all([
             Booking.aggregate([
                 { $match: bookingMatch },
-                { $group: { 
-                    _id: null, 
-                    ticketRevenue: { $sum: '$pricePaid' }, 
-                    adminCommission: { $sum: '$adminCommission' },
-                    hostEarnings: { $sum: '$hostEarnings' },
-                    totalTickets: { $sum: 1 } 
-                } }
+                { $group: { _id: null, ticketRevenue: { $sum: '$pricePaid' }, totalTickets: { $sum: 1 } } }
             ]),
             FoodOrder.aggregate([
                 { $match: orderMatch },
@@ -76,27 +71,23 @@ export const getAnalyticsSummary = async (req, res, next) => {
         });
 
         const ticketRevenue = ticketsAgg[0]?.ticketRevenue || 0;
-        const adminCommission = ticketsAgg[0]?.adminCommission || 0;
-        const hostEarnings = ticketsAgg[0]?.hostEarnings || 0;
         const totalTicketsCount = ticketsAgg[0]?.totalTickets || 0;
+        const grossRevenue = ticketRevenue + orderRevenue;
         
-        // ⚡ ADMIN: Only show ticket revenue and bookings (no food orders, staff, live orders)
-        // ⚡ HOST: Show everything
+        // ADMIN: Show platform-wide totals — gross revenue, per-stream breakdown, platform cut
         const responseData = isAdmin ? {
-            totalRevenue: adminCommission, // Admin's actual revenue is the commission
-            grossTicketRevenue: ticketRevenue,
-            adminCommission,
-            orderRevenue, // Required by APK frontend to render the pie chart split
-            adminCut: (ticketRevenue + orderRevenue) * 0.10,
+            totalRevenue: grossRevenue,          // Gross: tickets + food
+            ticketRevenue,                       // Ticket stream
+            orderRevenue,                        // Food stream
+            adminCut: grossRevenue * 0.10,       // 10% platform fee
             totalOrders: totalTicketsCount,
             totalTickets: totalTicketsCount,
             deliveredOrders: totalTicketsCount,
             rejectedOrders: 0,
             updatedAt: new Date()
         } : {
-            totalRevenue: hostEarnings + orderRevenue, // Host's revenue is 90% + 100% of orders
-            grossTicketRevenue: ticketRevenue,
-            hostEarnings,
+            totalRevenue: ticketRevenue + orderRevenue,
+            ticketRevenue,
             orderRevenue,
             totalOrders: totalTicketsCount + totalOrders,
             totalTickets: totalTicketsCount,
@@ -122,59 +113,70 @@ export const getRevenueTrend = async (req, res, next) => {
     try {
         const userRole = req.user?.role?.toUpperCase();
         const isAdmin = userRole === 'ADMIN' || userRole === 'SUPERADMIN';
-        
-        // ⚡ ADMIN: Show ALL revenue, HOST: Show only their revenue
+
         const CACHE_KEY = isAdmin ? 'analytics_trend_admin_all' : `analytics_trend_${req.user.id}`;
-        
-        let cachedData = await cacheService.get(CACHE_KEY);
+
+        // ⚡ Serve from cache instantly (30 min TTL)
+        const cachedData = await cacheService.get(CACHE_KEY);
         if (cachedData) {
             return res.status(200).json({ success: true, data: cachedData, source: 'cache' });
         }
 
-        // Get data from April 1st of current year
+        // Current month: 1st to today
         const today = new Date();
-        const aprilFirst = new Date(today.getFullYear(), 3, 1); // April 1st (month is 0-indexed)
-        aprilFirst.setHours(0, 0, 0, 0);
+        today.setHours(23, 59, 59, 999);
+        const since = new Date(today.getFullYear(), today.getMonth(), 1); // 1st of current month
+        since.setHours(0, 0, 0, 0);
+        const daysInRange = today.getDate(); // How many days so far this month
 
-        // ⚡ ADMIN: No hostId filter, HOST: Filter by hostId
-        const matchQuery = isAdmin 
-            ? { paymentStatus: 'paid', createdAt: { $gte: aprilFirst } }
-            : { hostId: req.user.id, paymentStatus: 'paid', createdAt: { $gte: aprilFirst } };
+        const hostFilter = isAdmin ? {} : { hostId: req.user.id };
 
-        const [ordersAgg, bookingsAgg] = await Promise.all([
-            FoodOrder.aggregate([
-                { $match: matchQuery },
-                { $group: {
-                    _id: { $dateToString: { format: "%Y-%m-%d", date: "$createdAt" } },
-                    dailyRevenue: { $sum: "$totalAmount" }
-                }},
-                { $sort: { _id: 1 } }
-            ]),
+        const baseMatch = {
+            ...hostFilter,
+            paymentStatus: 'paid',
+            createdAt: { $gte: since, $lte: today }
+        };
+
+        const groupByDate = {
+            $dateToString: { format: '%Y-%m-%d', date: '$createdAt', timezone: '+05:30' }
+        };
+
+        // ⚡ Single round-trip: both collections in parallel with index hints
+        const [bookingsAgg, ordersAgg] = await Promise.all([
             Booking.aggregate([
-                { $match: matchQuery },
-                { $group: {
-                    _id: { $dateToString: { format: "%Y-%m-%d", date: "$createdAt" } },
-                    dailyRevenue: { $sum: isAdmin ? "$adminCommission" : "$hostEarnings" }
-                }},
+                { $match: baseMatch },
+                { $group: { _id: groupByDate, rev: { $sum: '$pricePaid' } } },
                 { $sort: { _id: 1 } }
-            ])
+            ]).hint({ paymentStatus: 1 }),
+
+            FoodOrder.aggregate([
+                { $match: baseMatch },
+                { $group: { _id: groupByDate, rev: { $sum: '$totalAmount' } } },
+                { $sort: { _id: 1 } }
+            ]).hint({ status: 1, paymentStatus: 1 })
         ]);
 
-        const trendsMap = new Map();
-        [...ordersAgg, ...bookingsAgg].forEach(item => {
-            const current = trendsMap.get(item._id) || 0;
-            trendsMap.set(item._id, current + item.dailyRevenue);
-        });
+        // Merge both into a single date map
+        const map = new Map();
+        for (const { _id, rev } of [...bookingsAgg, ...ordersAgg]) {
+            map.set(_id, (map.get(_id) || 0) + rev);
+        }
 
-        const data = Array.from(trendsMap.entries())
-            .map(([date, revenue]) => ({ date, revenue }))
-            .sort((a, b) => a.date.localeCompare(b.date));
+        // Fill all days of current month so far
+        const data = [];
+        for (let i = 0; i < daysInRange; i++) {
+            const d = new Date(since);
+            d.setDate(since.getDate() + i);
+            const key = d.toISOString().split('T')[0];
+            data.push({ date: key, revenue: map.get(key) || 0 });
+        }
 
-        await cacheService.set(CACHE_KEY, data, 600); // 10 minutes cache
+        await cacheService.set(CACHE_KEY, data, 1800); // 30 min cache
 
         res.status(200).json({ success: true, data });
-    } catch(err) { next(err); }
+    } catch (err) { next(err); }
 };
+
 
 // GET /analytics/top-items
 export const getTopItems = async (req, res, next) => {
@@ -244,7 +246,6 @@ export const getTopUsers = async (req, res, next) => {
             .map(([uId, spent]) => ({ id: uId, spent }));
 
         // POPULATE users efficiently in one query
-        const { User } = await import('../models/user.model.js');
         const userInfos = await User.find({ _id: { $in: sortedIds.map(s => s.id) } })
             .select('name profileImage email')
             .lean();
@@ -294,7 +295,7 @@ export const getBookingTrend = async (req, res, next) => {
             { $group: {
                 _id: { $dateToString: { format: "%Y-%m-%d", date: "$createdAt" } },
                 count: { $sum: 1 },
-                revenue: { $sum: isAdmin ? "$adminCommission" : "$hostEarnings" }
+                revenue: { $sum: "$pricePaid" }
             }},
             { $sort: { _id: 1 } }
         ]);

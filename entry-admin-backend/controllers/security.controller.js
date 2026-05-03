@@ -3,6 +3,7 @@ import { IssueReport } from '../models/IssueReport.js';
 import { Booking } from '../models/booking.model.js';
 import { getIO } from '../socket.js';
 import { cleanTableId, cleanZone } from '../utils/tableUtils.js';
+import Notification from '../models/Notification.js';
 
 /**
  * @desc    Submit an issue report (User-side)

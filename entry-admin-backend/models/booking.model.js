@@ -32,6 +32,7 @@ bookingSchema.index({ eventId: 1, seatIds: 1 });
 bookingSchema.index({ status: 1, paymentStatus: 1 }); // Required for Revenue aggregation
 bookingSchema.index({ createdAt: -1 }); // Global sorting
 bookingSchema.index({ paymentStatus: 1 }); // Revenue counting
+bookingSchema.index({ paymentStatus: 1, createdAt: -1 }); // ⚡ Revenue trend fast path
 
 
 export const Booking = mongoose.model('Booking', bookingSchema);
