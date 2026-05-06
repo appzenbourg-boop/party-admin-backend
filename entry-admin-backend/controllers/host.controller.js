@@ -1141,23 +1141,39 @@ export const submitPayoutRequest = async (req, res, next) => {
         const hostId = req.user.id;
         const { amount } = req.body;
 
-        if (!amount || amount <= 0) {
-            return res.status(400).json({ success: false, message: 'Invalid payout amount' });
+        // ✅ FIX: Explicitly convert to Number — frontend may send string
+        const amountNum = Number(amount);
+        if (!amountNum || isNaN(amountNum) || amountNum <= 0) {
+            return res.status(400).json({ success: false, message: 'Invalid payout amount. Must be a positive number.' });
         }
 
         const host = await Host.findById(hostId).select('name bankDetails').lean();
         if (!host) return res.status(404).json({ success: false, message: 'Host not found' });
 
+        // Check for duplicate pending request (prevent double-submit)
+        const existingPending = await PayoutRequest.findOne({ hostId, status: 'PENDING' }).lean();
+        if (existingPending) {
+            return res.status(400).json({
+                success: false,
+                message: 'You already have a pending payout request. Please wait for it to be processed.'
+            });
+        }
+
         // Snapshot bank details at time of request
         const request = await PayoutRequest.create({
             hostId,
-            amount,
+            amount: amountNum,   // ✅ Always stored as Number
             bankDetails: host.bankDetails || {},
             status: 'PENDING',
         });
 
+        console.log(`[PayoutRequest] ✅ New request created: ${request._id} | Host: ${hostId} | Amount: ₹${amountNum}`);
+
         res.status(201).json({ success: true, message: 'Payout request submitted!', data: request });
-    } catch (error) { next(error); }
+    } catch (error) {
+        console.error('[PayoutRequest] ❌ Error creating payout request:', error.message);
+        next(error);
+    }
 };
 
 export const getMyPayoutRequests = async (req, res, next) => {
