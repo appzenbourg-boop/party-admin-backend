@@ -141,19 +141,18 @@ export const getRevenueTrend = async (req, res, next) => {
             $dateToString: { format: '%Y-%m-%d', date: '$createdAt', timezone: '+05:30' }
         };
 
-        // ⚡ Single round-trip: both collections in parallel with index hints
         const [bookingsAgg, ordersAgg] = await Promise.all([
             Booking.aggregate([
                 { $match: baseMatch },
                 { $group: { _id: groupByDate, rev: { $sum: '$pricePaid' } } },
                 { $sort: { _id: 1 } }
-            ]).hint({ paymentStatus: 1 }),
+            ]),
 
             FoodOrder.aggregate([
                 { $match: baseMatch },
                 { $group: { _id: groupByDate, rev: { $sum: '$totalAmount' } } },
                 { $sort: { _id: 1 } }
-            ]).hint({ status: 1, paymentStatus: 1 })
+            ])
         ]);
 
         // Merge both into a single date map
