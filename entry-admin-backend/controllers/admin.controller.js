@@ -80,9 +80,12 @@ export const getHostList = async (req, res, next) => {
         const skip = (page - 1) * limit;
 
         const query = { role: 'HOST' };
-        
         if (search) {
-            query.$text = { $search: search };
+            query.$or = [
+                { name: { $regex: search, $options: 'i' } },
+                { email: { $regex: search, $options: 'i' } },
+                { phone: { $regex: search, $options: 'i' } }
+            ];
         }
 
         if (status) query.hostStatus = status;
@@ -205,30 +208,53 @@ export const verifyHost = async (req, res, next) => {
         const { id } = req.params;
         const { action, reason } = req.body; // action: 'approve' or 'reject'
 
+        console.log('═══════════════════════════════════════════════════════════');
+        console.log('👑 [ADMIN ACTION] VERIFY HOST');
+        console.log('Admin ID:', req.user.id);
+        console.log('Host ID:', id);
+        console.log('Action:', action);
+        console.log('Reason:', reason || 'N/A');
+        console.log('═══════════════════════════════════════════════════════════');
+
         if (!['approve', 'reject'].includes(action)) {
+            console.log('❌ Invalid action provided:', action);
+            console.log('═══════════════════════════════════════════════════════════');
             return res.status(400).json({ success: false, message: 'Action must be approve or reject' });
         }
 
         if (action === 'reject' && !reason) {
+            console.log('❌ Rejection reason missing');
+            console.log('═══════════════════════════════════════════════════════════');
             return res.status(400).json({ success: false, message: 'Rejection reason is required' });
         }
 
         const host = await Host.findById(id);
         
         if (!host || host.role !== 'HOST') {
+            console.log('❌ Host not found or invalid role');
+            console.log('═══════════════════════════════════════════════════════════');
             return res.status(404).json({ success: false, message: 'Host not found' });
         }
 
+        console.log('📋 Host Details:');
+        console.log('   Name:', host.name);
+        console.log('   Email:', host.email);
+        console.log('   Current Status:', host.hostStatus);
+        console.log('   Is Verified:', host.isVerified);
+
         if (host.hostStatus !== 'KYC_PENDING') {
+            console.log('❌ Host is not pending KYC approval');
+            console.log('═══════════════════════════════════════════════════════════');
             return res.status(400).json({ success: false, message: 'Host is not pending KYC approval' });
         }
 
         if (action === 'approve') {
-            console.log(`[Admin] Approving host ${id}. Current status:`, host.hostStatus);
+            console.log('✅ Approving host...');
             host.hostStatus = 'ACTIVE';
             host.isVerified = true;
             host.kycRejectionReason = '';
-            console.log(`[Admin] Updated host object. New status:`, host.hostStatus, 'isVerified:', host.isVerified);
+            console.log('   New Status:', host.hostStatus);
+            console.log('   Is Verified:', host.isVerified);
             
             // Smart Notification
             await sendNotification(host._id, {
@@ -242,7 +268,7 @@ export const verifyHost = async (req, res, next) => {
                 const io = getIO();
                 if (io) {
                     const roomName = id.toString();
-                    console.log(`[Admin] Emitting APPROVAL to room: ${roomName}`);
+                    console.log('📡 Emitting real-time approval to room:', roomName);
                     
                     io.to(roomName).emit('host:status:updated', { 
                         hostStatus: 'ACTIVE',
@@ -250,20 +276,21 @@ export const verifyHost = async (req, res, next) => {
                     });
                     
                     const socketsInRoom = await io.in(roomName).fetchSockets();
-                    console.log(`[Admin] APPROVAL - Sockets in room ${roomName}:`, socketsInRoom.length);
+                    console.log('   Sockets in room:', socketsInRoom.length);
                     
                     if (socketsInRoom.length === 0) {
-                        console.warn(`[Admin] ⚠️ APPROVAL - No sockets found for host ${id}`);
+                        console.warn('   ⚠️ No sockets found for host');
                     } else {
-                        console.log(`[Admin] ✅ APPROVAL event sent to ${socketsInRoom.length} socket(s)`);
+                        console.log('   ✅ Approval event sent to', socketsInRoom.length, 'socket(s)');
                     }
                 }
             } catch (socketErr) {
-                console.error('[Admin] Socket emit failed (approval):', socketErr.message);
+                console.error('   ❌ Socket emit failed:', socketErr.message);
             }
 
         } else if (action === 'reject') {
-            console.log(`[Admin] Rejecting host ${id}. Reason:`, reason);
+            console.log('❌ Rejecting host...');
+            console.log('   Reason:', reason);
             host.hostStatus = 'REJECTED';
             host.kycRejectionReason = reason;
 
@@ -279,7 +306,7 @@ export const verifyHost = async (req, res, next) => {
                 const io = getIO();
                 if (io) {
                     const roomName = id.toString();
-                    console.log(`[Admin] Emitting REJECTION to room: ${roomName}`);
+                    console.log('📡 Emitting real-time rejection to room:', roomName);
                     
                     io.to(roomName).emit('host:status:updated', { 
                         hostStatus: 'REJECTED',
@@ -288,35 +315,46 @@ export const verifyHost = async (req, res, next) => {
                     });
                     
                     const socketsInRoom = await io.in(roomName).fetchSockets();
-                    console.log(`[Admin] REJECTION - Sockets in room ${roomName}:`, socketsInRoom.length);
+                    console.log('   Sockets in room:', socketsInRoom.length);
                 }
             } catch (socketErr) {
-                console.error('[Admin] Socket emit failed (rejection):', socketErr.message);
+                console.error('   ❌ Socket emit failed:', socketErr.message);
             }
         }
 
-        console.log(`[Admin] Saving host to database...`);
+        console.log('💾 Saving host to database...');
         const savedHost = await host.save();
-        console.log(`[Admin] ✅ Host saved successfully. DB status:`, savedHost.hostStatus, 'isVerified:', savedHost.isVerified);
+        console.log('✅ Host saved successfully!');
+        console.log('   DB Status:', savedHost.hostStatus);
+        console.log('   Is Verified:', savedHost.isVerified);
 
         // 🔥 VERIFY: Read back from DB to confirm save
         const verifyHost = await Host.findById(id).select('hostStatus isVerified').lean();
-        console.log(`[Admin] 🧠 DB VERIFICATION - Status:`, verifyHost.hostStatus, 'isVerified:', verifyHost.isVerified);
+        console.log('🔍 DB Verification:');
+        console.log('   Status:', verifyHost.hostStatus);
+        console.log('   Is Verified:', verifyHost.isVerified);
         
         if (verifyHost.hostStatus !== savedHost.hostStatus) {
-            console.error(`[Admin] ❌ CRITICAL: DB mismatch! Saved: ${savedHost.hostStatus}, DB: ${verifyHost.hostStatus}`);
+            console.error('❌ CRITICAL: DB mismatch!');
+            console.error('   Saved:', savedHost.hostStatus);
+            console.error('   DB:', verifyHost.hostStatus);
         }
 
-        // Proactive Cache Invalidation - AGGRESSIVE with CORRECT keys
-        console.log(`[Admin] Clearing cache for host ${id}...`);
+        // Proactive Cache Invalidation
+        console.log('🗑️ Clearing cache for host...');
         await cacheService.delete(`auth_status_${id}`);
         await cacheService.delete(`profile_${id}`);
         await cacheService.delete(`host_profile_${id}`);
         await cacheService.delete(`hostProfile_${id}`);
-        await cacheService.delete(`host:profile:${id}`); // ⚡ CRITICAL: Correct cache key format
+        await cacheService.delete(`host:profile:${id}`);
         await cacheService.delete('admin_dashboard_stats');
         await cacheService.delete('events_all_guest_v11');
-        console.log(`[Admin] ✅ Cache cleared successfully`);
+        console.log('✅ Cache cleared successfully');
+
+        console.log('✅ [ADMIN ACTION] Host verification completed successfully!');
+        console.log('   Action:', action);
+        console.log('   Final Status:', savedHost.hostStatus);
+        console.log('═══════════════════════════════════════════════════════════');
 
         res.status(200).json({
             success: true,
@@ -329,9 +367,11 @@ export const verifyHost = async (req, res, next) => {
             }
         });
         
-        console.log(`[Admin] ✅ Response sent. Host ${id} is now ${savedHost.hostStatus}`);
+        console.log('📤 Response sent successfully');
     } catch (error) {
-        console.error('[Admin] ❌ Error in verifyHost:', error);
+        console.error('❌ [ADMIN ACTION] VERIFY HOST FAILED:', error.message);
+        console.error('   Stack:', error.stack);
+        console.log('═══════════════════════════════════════════════════════════');
         next(error);
     }
 };
@@ -341,6 +381,13 @@ export const suspendHost = async (req, res, next) => {
     try {
         const { id } = req.params;
         const { reason } = req.body;
+
+        console.log('═══════════════════════════════════════════════════════════');
+        console.log('🚫 [ADMIN ACTION] SUSPEND/BAN HOST');
+        console.log('Admin ID:', req.user.id);
+        console.log('Host ID:', id);
+        console.log('Reason:', reason || 'N/A');
+        console.log('═══════════════════════════════════════════════════════════');
 
         const host = await Host.findById(id);
         if (!host || host.role !== 'HOST') {
@@ -437,8 +484,13 @@ export const getUserList = async (req, res, next) => {
         const limit = Math.min(parseInt(req.query.limit, 10) || 25, 100);
         const search = req.query.search || '';
         const skip = (page - 1) * limit;
-
-        const query = search ? { $text: { $search: search } } : {};
+        const query = search ? {
+            $or: [
+                { name: { $regex: search, $options: 'i' } },
+                { email: { $regex: search, $options: 'i' } },
+                { phone: { $regex: search, $options: 'i' } }
+            ]
+        } : {};
 
         const [users, total] = await Promise.all([
             User.find(query)
