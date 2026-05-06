@@ -376,17 +376,20 @@ export const getPayments = async (req, res, next) => {
         if (cached) return res.status(200).json({ success: true, data: cached });
 
         const bookings = await Booking.find({ hostId })
-            .populate('userId', 'name profileImage')
+            .populate('userId', 'name profileImage phone')
+            .populate('eventId', 'title')
             .sort({ createdAt: -1 })
-            .select('userId ticketType pricePaid paymentStatus createdAt')
+            .select('userId ticketType pricePaid paymentStatus createdAt eventId')
             .lean();
 
         const data = bookings.map(b => ({
             id: b._id, memberName: b.userId?.name || 'Unknown',
             memberImage: b.userId?.profileImage || '',
+            memberPhone: b.userId?.phone || '',
             plan: b.ticketType || 'Standard', amount: b.pricePaid || 0,
             status: b.paymentStatus === 'paid' ? 'Success' : 'Pending',
-            date: b.createdAt
+            date: b.createdAt,
+            eventId: b.eventId
         }));
         await cacheService.set(CACHE_KEY, data, TTL.payments);
         res.status(200).json({ success: true, data });
@@ -921,6 +924,7 @@ export const getOrders = async (req, res, next) => {
         // FoodOrder already has hostId — query directly, no join needed
         const orders = await FoodOrder.find({ hostId: req.user.id })
             .populate('userId', 'name phone profileImage')
+            .populate('eventId', 'title')
             .sort({ createdAt: -1 })
             .lean();
 
