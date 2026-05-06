@@ -51,7 +51,16 @@ const checkIsEventExpired = (event) => {
 
 export const createEvent = async (req, res, next) => {
     try {
-        console.log(`[createEvent] Creating new event for host: ${req.user.id}`);
+        console.log('═══════════════════════════════════════════════════════════');
+        console.log('🎉 [HOST ACTION] CREATE EVENT');
+        console.log('Host ID:', req.user.id);
+        console.log('Host Role:', req.user.role);
+        console.log('Event Title:', req.body.title);
+        console.log('Event Date:', req.body.date);
+        console.log('Event Status:', req.body.status || 'DRAFT');
+        console.log('Location Visibility:', req.body.locationVisibility || 'public');
+        console.log('Booking Open Date:', req.body.bookingOpenDate);
+        console.log('═══════════════════════════════════════════════════════════');
 
         const { 
             title, description, date, endDate, startTime, endTime, coverImage, images, 
@@ -95,7 +104,11 @@ export const createEvent = async (req, res, next) => {
         });
 
         await event.save();
-        console.log(`[createEvent] Event created successfully: ${event._id}`);
+        
+        console.log('✅ [HOST ACTION] Event created successfully!');
+        console.log('Event ID:', event._id);
+        console.log('Event Status:', event.status);
+        console.log('═══════════════════════════════════════════════════════════');
 
         // If directly published, notify
         if (status === 'LIVE') {
@@ -113,7 +126,8 @@ export const createEvent = async (req, res, next) => {
             message: "Experience Launched Successfully!"
         });
     } catch (error) {
-        console.error(`[createEvent] Error:`, error);
+        console.error('❌ [HOST ACTION] CREATE EVENT FAILED:', error);
+        console.log('═══════════════════════════════════════════════════════════');
         next(error);
     }
 };
@@ -121,6 +135,14 @@ export const createEvent = async (req, res, next) => {
 export const updateEvent = async (req, res, next) => {
     try {
         const { eventId } = req.params;
+        
+        console.log('═══════════════════════════════════════════════════════════');
+        console.log('✏️ [HOST ACTION] UPDATE EVENT');
+        console.log('Host ID:', req.user.id);
+        console.log('Event ID:', eventId);
+        console.log('Update Fields:', Object.keys(req.body));
+        console.log('═══════════════════════════════════════════════════════════');
+        
         const uploadTask = async (data, folder) => {
             if (data && data.startsWith('data:')) {
                 return await uploadToCloudinary(data, folder);
@@ -137,8 +159,17 @@ export const updateEvent = async (req, res, next) => {
         }
 
         const updated = await Event.findByIdAndUpdate(eventId, updateData, { new: true });
+        
+        console.log('✅ [HOST ACTION] Event updated successfully!');
+        console.log('Event ID:', updated._id);
+        console.log('Event Title:', updated.title);
+        console.log('Event Status:', updated.status);
+        console.log('═══════════════════════════════════════════════════════════');
+        
         return res.status(200).json({ success: true, eventId: updated._id });
     } catch (error) {
+        console.error('❌ [HOST ACTION] UPDATE EVENT FAILED:', error);
+        console.log('═══════════════════════════════════════════════════════════');
         next(error);
     }
 };
@@ -186,22 +217,43 @@ export const updateEventStatus = async (req, res, next) => {
         const { eventId } = req.params;
         const { status }  = req.body;
 
+        console.log('═══════════════════════════════════════════════════════════');
+        console.log('🔄 [HOST ACTION] UPDATE EVENT STATUS');
+        console.log('Host ID:', req.user.id);
+        console.log('Event ID:', eventId);
+        console.log('New Status:', status);
+        console.log('═══════════════════════════════════════════════════════════');
+
         // Whitelist allowed statuses
         const VALID = ['LIVE', 'PAUSED', 'DRAFT', 'ENDED'];
         if (!VALID.includes(status)) {
+            console.log('❌ Invalid status provided:', status);
+            console.log('═══════════════════════════════════════════════════════════');
             return res.status(400).json({ success: false, message: `Invalid status. Allowed: ${VALID.join(', ')}` });
         }
         if (!mongoose.Types.ObjectId.isValid(eventId)) {
+            console.log('❌ Invalid event ID:', eventId);
+            console.log('═══════════════════════════════════════════════════════════');
             return res.status(400).json({ success: false, message: 'Invalid event ID' });
         }
 
         const updated = await Event.findOneAndUpdate(
             { _id: eventId, hostId: req.user.id }, // ownership check
             { status },
-            { new: true, select: '_id title status' }
+            { new: true, select: '_id title status date' }
         );
 
-        if (!updated) return res.status(404).json({ success: false, message: 'Event not found or unauthorised' });
+        if (!updated) {
+            console.log('❌ Event not found or unauthorized');
+            console.log('═══════════════════════════════════════════════════════════');
+            return res.status(404).json({ success: false, message: 'Event not found or unauthorised' });
+        }
+
+        console.log('✅ [HOST ACTION] Event status updated successfully!');
+        console.log('Event Title:', updated.title);
+        console.log('Event Date:', updated.date);
+        console.log('New Status:', updated.status);
+        console.log('═══════════════════════════════════════════════════════════');
 
         // ⚡ Bust host events cache so changes show immediately on Manage Events screen
         cacheService.delete(`host_events_${req.user.id}`).catch(() => {});
@@ -219,6 +271,8 @@ export const updateEventStatus = async (req, res, next) => {
 
         return res.status(200).json({ success: true, status: updated.status });
     } catch (error) {
+        console.error('❌ [HOST ACTION] UPDATE EVENT STATUS FAILED:', error);
+        console.log('═══════════════════════════════════════════════════════════');
         next(error);
     }
 };
