@@ -31,6 +31,6 @@ export const sendOtpSchema = Joi.object({
 
 export const verifyOtpSchema = Joi.object({
     identifier: Joi.string().required(),
-    otp: Joi.string().length(6).required(),
+    otp: Joi.string().length(6).optional(),
     idToken: Joi.string().optional() // For Firebase alternative
 });
