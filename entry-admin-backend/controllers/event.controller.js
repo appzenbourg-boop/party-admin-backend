@@ -319,7 +319,11 @@ export const getEvents = async (req, res, next) => {
             return res.status(200).json({ success: true, events: cached });
         }
 
-        console.log(`📡 [HostEvents] Fetching from DB for host: ${hostId}`);
+        console.log('═══════════════════════════════════════════════════════════');
+        console.log('📡 [HOST EVENTS DEBUG] Fetching events for host:', hostId);
+        console.log('═══════════════════════════════════════════════════════════');
+        
+        // Get all events for this host with full details
         const events = await Event.find({ hostId })
             .select('title date endDate startTime endTime coverImage status attendeeCount tickets locationVisibility isLocationRevealed displayPrice revealTime bookingOpenDate')
             .sort({ date: -1 })
@@ -327,12 +331,43 @@ export const getEvents = async (req, res, next) => {
 
         // Early exit — no events, skip aggregation
         if (!events.length) {
-            console.log(`⚠️ [HostEvents] No events found for host: ${hostId}`);
+            console.log('⚠️ [HOST EVENTS DEBUG] No events found for this host');
+            console.log('═══════════════════════════════════════════════════════════');
             cacheService.set(CACHE_KEY, [], 60).catch(() => {});
             return res.status(200).json({ success: true, events: [] });
         }
 
-        console.log(`📊 [HostEvents] Found ${events.length} events. Calculating stats...`);
+        console.log(`📊 [HOST EVENTS DEBUG] Total events found: ${events.length}`);
+        console.log('');
+        console.log('📋 [HOST EVENTS DEBUG] Event Details:');
+        console.log('─────────────────────────────────────────────────────────────');
+        
+        // Log each event with detailed info
+        events.forEach((event, index) => {
+            console.log(`Event ${index + 1}:`);
+            console.log(`  ID: ${event._id}`);
+            console.log(`  Title: ${event.title}`);
+            console.log(`  Status: ${event.status}`);
+            console.log(`  Date: ${event.date}`);
+            console.log(`  Start Time: ${event.startTime || 'N/A'}`);
+            console.log(`  End Time: ${event.endTime || 'N/A'}`);
+            console.log(`  Attendee Count: ${event.attendeeCount || 0}`);
+            console.log(`  Tickets: ${event.tickets ? event.tickets.length : 0} types`);
+            console.log('─────────────────────────────────────────────────────────────');
+        });
+        
+        // Count by status
+        const statusCounts = events.reduce((acc, e) => {
+            acc[e.status] = (acc[e.status] || 0) + 1;
+            return acc;
+        }, {});
+        
+        console.log('');
+        console.log('📈 [HOST EVENTS DEBUG] Status Breakdown:');
+        Object.entries(statusCounts).forEach(([status, count]) => {
+            console.log(`  ${status}: ${count}`);
+        });
+        console.log('═══════════════════════════════════════════════════════════');
 
         // Auto-expire check for host view
         events.forEach(e => {
