@@ -591,7 +591,7 @@ export const getAdminStats = async (req, res, next) => {
             User.countDocuments({ role: 'user' }),
             Host.countDocuments({ role: 'HOST', hostStatus: 'ACTIVE' }),
             Host.countDocuments({ role: 'HOST' }),
-            Host.countDocuments({ hostStatus: { $in: ['INVITED', 'KYC_PENDING'] } }),
+            Host.countDocuments({ hostStatus: 'KYC_PENDING' }),
             Booking.countDocuments({ status: { $in: ['approved', 'active', 'completed', 'checked_in'] } }),
             Booking.countDocuments({ status: 'checked_in' }),
             Booking.aggregate([
