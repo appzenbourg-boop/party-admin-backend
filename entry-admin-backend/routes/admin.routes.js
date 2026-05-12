@@ -25,6 +25,7 @@ import {
     getAdminProfile,
     getPayoutRequests,
     processPayoutRequest,
+    updateHostCommission,
 } from '../controllers/admin.controller.js';
 
 
@@ -44,6 +45,7 @@ router.put('/hosts/:id/status-toggle', toggleHostRegistryStatus);
 router.delete('/hosts/:id', deleteHost);
 router.put('/hosts/:id/verify', verifyHost);
 router.put('/hosts/:id/suspend', suspendHost);
+router.put('/hosts/:id/commission', updateHostCommission);
 router.put('/events/:eventId/flags', toggleEventFlags);
 router.get('/staff', getAllStaff);
 router.put('/staff/:id/status', toggleStaffStatus);

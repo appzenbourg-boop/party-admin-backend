@@ -896,3 +896,35 @@ export const processPayoutRequest = async (req, res, next) => {
         next(error);
     }
 };
+
+// ── UPDATE HOST COMMISSION (Admin) ─────────────────────────────────────────
+export const updateHostCommission = async (req, res, next) => {
+    try {
+        const { id } = req.params;
+        let { commissionRate } = req.body;
+
+        if (commissionRate === undefined || commissionRate < 0 || commissionRate > 100) {
+            return res.status(400).json({ success: false, message: 'Invalid commission rate (0-100)' });
+        }
+        
+        commissionRate = Number(commissionRate);
+
+        const host = await Host.findById(id);
+        if (!host) return res.status(404).json({ success: false, message: 'Host not found' });
+
+        host.commissionRate = commissionRate;
+        await host.save();
+
+        await cacheService.delete(`admin_host_prof_v2_${id}`);
+        await cacheService.delete(`profile_${id}`);
+        await cacheService.delete(`host_profile_${id}`);
+
+        res.status(200).json({ 
+            success: true, 
+            message: `Commission rate updated to ${commissionRate}%`,
+            data: { id: host._id, commissionRate: host.commissionRate }
+        });
+    } catch (error) {
+        next(error);
+    }
+};
