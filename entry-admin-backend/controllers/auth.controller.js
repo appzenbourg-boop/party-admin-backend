@@ -11,6 +11,7 @@ import { registerSchema, loginSchema, refreshTokenSchema, forgotPasswordSchema, 
 import sendEmail from '../utils/sendEmail.js';
 import { sendSmsOtp, verifySmsOtp } from '../services/sms.service.js';
 import { cacheService } from '../services/cache.service.js';
+import appleSigninAuth from 'apple-signin-auth';
 
 // ── Username Generation for Google Users ────────────────────────────────────
 const generateUsername = (name) => {
@@ -812,10 +813,127 @@ export const googleLogin = async (req, res, next) => {
                 username: user.username || null,
                 onboardingCompleted: true,   // Google users always skip onboarding
                 accessToken,
-                refreshToken,
+                token: accessToken,
+                refreshToken
             }
         });
     } catch (err) {
+        next(err);
+    }
+};
+
+export const appleLogin = async (req, res, next) => {
+    try {
+        const { identityToken, email, fullName } = req.body;
+        
+        if (!identityToken) {
+            return res.status(400).json({ success: false, message: 'Apple identityToken required' });
+        }
+
+        // Verify the Apple token
+        const appleIdTokenClaims = await appleSigninAuth.verifyIdToken(identityToken, {
+            ignoreExpiration: true,
+        });
+
+        const appleId = appleIdTokenClaims.sub;
+        const tokenEmail = appleIdTokenClaims.email;
+        const finalEmail = (email || tokenEmail || '').toLowerCase();
+
+        let user;
+        if (finalEmail) {
+            user = await User.findOne({ 
+                $or: [
+                    { appleId },
+                    { email: finalEmail }
+                ] 
+            });
+        } else {
+            user = await User.findOne({ appleId });
+        }
+
+        if (!user && !finalEmail) {
+            return res.status(400).json({ success: false, message: 'Could not extract email from Apple login, and user not found' });
+        }
+
+        if (!user) {
+            // New User
+            const tempId = new mongoose.Types.ObjectId();
+            const referralCode = Math.random().toString(36).substring(2, 8).toUpperCase() + tempId.toString().substring(18, 22).toUpperCase();
+            
+            let displayName = 'Apple User';
+            if (fullName) {
+                if (typeof fullName === 'object') {
+                    displayName = `${fullName.givenName || ''} ${fullName.familyName || ''}`.trim();
+                } else if (typeof fullName === 'string') {
+                    displayName = fullName;
+                }
+            } else if (finalEmail) {
+                displayName = finalEmail.split('@')[0];
+            }
+
+            const autoUsername = await getUniqueUsername(displayName);
+
+            user = new User({
+                _id: tempId,
+                name: displayName,
+                username: autoUsername,
+                email: finalEmail,
+                emailVerified: true,
+                isVerified: true,
+                provider: 'apple',
+                appleId,
+                role: 'user',
+                onboardingCompleted: true,
+                isActive: true,
+                referralCode,
+                tokenVersion: 1
+            });
+            await user.save();
+        } else {
+            // Existing User: Update appleId if missing
+            if (!user.appleId) {
+                user.appleId = appleId;
+                await user.constructor.updateOne({ _id: user._id }, { $set: { appleId } });
+            }
+        }
+
+        if (!user.isActive) {
+            return res.status(403).json({ success: false, message: 'Your account has been deactivated' });
+        }
+
+        user.role = "user";
+        user.tokenVersion = (user.tokenVersion || 0) + 1;
+
+        const { accessToken, refreshToken } = generateTokens(user);
+        await user.constructor.updateOne({ _id: user._id }, { $set: { refreshToken } });
+
+        // Clear caches
+        const cacheKeys = [
+            cacheService.formatKey('active_event', user._id),
+            cacheService.formatKey('my-bookings', user._id),
+            cacheService.formatKey('my-orders', user._id),
+            cacheService.formatKey('profile', user._id),
+            cacheService.formatKey('profile_v2', user._id),
+            `auth_status_${user._id}`
+        ];
+        
+        await Promise.all(cacheKeys.map(key => cacheService.delete(key)));
+
+        res.status(200).json({
+            success: true,
+            user: {
+                id: user._id,
+                name: user.name,
+                role: 'user',
+                profileImage: user.profileImage,
+                onboardingCompleted: user.onboardingCompleted
+            },
+            token: accessToken,
+            refreshToken
+        });
+
+    } catch (err) {
+        console.error('[Apple Auth Error]', err.message);
         next(err);
     }
 };
