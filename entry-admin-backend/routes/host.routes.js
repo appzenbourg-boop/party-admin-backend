@@ -161,4 +161,12 @@ router.post('/menu', addMenuItem);
 router.put('/menu/:itemId', updateMenuItem);
 router.delete('/menu/:itemId', removeMenuItem);
 
+// --- DASHBOARD & PAYOUTS ---
+router.get('/dashboard/stats', getDashboardStats);
+router.get('/payouts', getDashboardStats); // Mobile app calls this for wallet summary
+router.get('/bank-details', getBankDetails);
+router.put('/bank-details', updateBankDetails);
+router.post('/payout-requests', submitPayoutRequest);
+router.get('/payout-requests', getMyPayoutRequests);
+
 export default router;

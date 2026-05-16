@@ -1093,7 +1093,7 @@ export const submitIncidentReport = async (req, res, next) => {
             }
 
             if (category === 'Technical Bug') {
-                const devUser = await User.findOne({ username: 'devanshjais20' }).select('_id').lean();
+                const devUser = await User.findOne({ email: process.env.ADMIN_EMAIL || 'info.zenbourg@gmail.com' }).select('_id').lean();
                 if (devUser) {
                     const { notificationService } = await import('../services/notification.service.js');
                     notificationService.sendToUser(
