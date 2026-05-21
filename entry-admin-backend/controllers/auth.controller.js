@@ -905,7 +905,8 @@ export const appleLogin = async (req, res, next) => {
         user.tokenVersion = (user.tokenVersion || 0) + 1;
 
         const { accessToken, refreshToken } = generateTokens(user);
-        await user.constructor.updateOne({ _id: user._id }, { $set: { refreshToken } });
+        // ✅ CRITICAL FIX: Persist tokenVersion to DB so auth middleware doesn't reject the JWT
+        await user.constructor.updateOne({ _id: user._id }, { $set: { refreshToken, tokenVersion: user.tokenVersion } });
 
         // Clear caches
         const cacheKeys = [
